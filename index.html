@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>SQUAD MANAGER</title>
+<meta name="theme-color" content="#16211B">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Squad">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body { background: #EFF2ED; overscroll-behavior-y: none; }
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ================= palette / tokens ================= */
+const C = {
+  bg: "#EFF2ED",
+  card: "#FFFFFF",
+  ink: "#16211B",
+  muted: "#66736B",
+  line: "#DDE3DC",
+  pitchA: "#2E7D4F",
+  pitchB: "#297246",
+  chalk: "rgba(255,255,255,0.85)",
+  blue: "#1B3C8C",
+  gk: "#E8A13A",
+  df: "#1B3C8C",
+  mf: "#2E7D4F",
+  fw: "#C63B3B",
+  enemy: "#3A3F44",
+};
+
+/* 細分化ポジション */
+const POS_GROUPS = {
+  GK: ["GK"],
+  DF: ["CB", "RB", "LB", "RWB", "LWB"],
+  MF: ["CDM", "CM", "CAM", "RM", "LM"],
+  FW: ["ST", "CF", "RW", "LW"],
+};
+const ALL_POS = Object.values(POS_GROUPS).flat();
+const groupOf = (p) => Object.keys(POS_GROUPS).find((g) => POS_GROUPS[g].includes(p)) || "MF";
+const GROUP_COLOR = { GK: C.gk, DF: C.df, MF: C.mf, FW: C.fw };
+const posColor = (p) => GROUP_COLOR[groupOf(p)];
+
+/* ================= formation presets (11人制のみ) ================= */
+const FORMATIONS = {
+  "4-4-2": [
+    ["GK", 50, 91],
+    ["RB", 85, 72], ["CB", 62, 75], ["CB", 38, 75], ["LB", 15, 72],
+    ["RM", 85, 50], ["CM", 62, 53], ["CM", 38, 53], ["LM", 15, 50],
+    ["ST", 38, 28], ["ST", 62, 28],
+  ],
+  "4-3-3": [
+    ["GK", 50, 91],
+    ["RB", 85, 72], ["CB", 62, 75], ["CB", 38, 75], ["LB", 15, 72],
+    ["CM", 30, 52], ["CDM", 50, 58], ["CM", 70, 52],
+    ["RW", 80, 28], ["ST", 50, 23], ["LW", 20, 28],
+  ],
+  "3-5-2": [
+    ["GK", 50, 91],
+    ["CB", 28, 74], ["CB", 50, 77], ["CB", 72, 74],
+    ["RWB", 90, 48], ["CM", 68, 53], ["CDM", 50, 58], ["CM", 32, 53], ["LWB", 10, 48],
+    ["ST", 38, 26], ["ST", 62, 26],
+  ],
+  "4-2-3-1": [
+    ["GK", 50, 91],
+    ["RB", 85, 72], ["CB", 62, 75], ["CB", 38, 75], ["LB", 15, 72],
+    ["CDM", 38, 58], ["CDM", 62, 58],
+    ["RM", 80, 40], ["CAM", 50, 43], ["LM", 20, 40],
+    ["ST", 50, 24],
+  ],
+};
+const ENEMY_DEFAULT = FORMATIONS["4-4-2"];
+
+const uid = () => Math.random().toString(36).slice(2, 9);
+const STORE_KEY = "soccer-squad-v2";
+
+/* ================= rotation algorithm ================= */
+function buildRotation(attendees, fieldCount, totalMin, segments, gkId) {
+  const segMin = totalMin / segments;
+  const time = {}, lastOn = {};
+  attendees.forEach((p) => { time[p.id] = 0; lastOn[p.id] = -99; });
+  const grid = [];
+  const hasGk = gkId && attendees.some((p) => p.id === gkId);
+  for (let s = 0; s < segments; s++) {
+    const pool = attendees.filter((p) => !hasGk || p.id !== gkId);
+    const need = Math.min(pool.length, fieldCount - (hasGk ? 1 : 0));
+    pool.sort((a, b) =>
+      time[a.id] - time[b.id] || lastOn[a.id] - lastOn[b.id] || (a._r - b._r)
+    );
+    const on = pool.slice(0, need).map((p) => p.id);
+    if (hasGk) on.unshift(gkId);
+    on.forEach((id) => { time[id] += segMin; lastOn[id] = s; });
+    grid.push(on);
+  }
+  return { grid, time, segMin };
+}
+
+/* ================= small ui bits ================= */
+function PosBadge({ pos, small }) {
+  return (
+    <span style={{
+      background: posColor(pos), color: "#fff", borderRadius: 4,
+      fontSize: small ? 10 : 11, fontWeight: 700, padding: small ? "1px 5px" : "2px 6px",
+      letterSpacing: "0.05em", fontFamily: "'Oswald', sans-serif",
+    }}>{pos}</span>
+  );
+}
+
+function SectionTitle({ en, ja }) {
+  return (
+    <div style={{ margin: "4px 0 12px" }}>
+      <div style={{
+        fontFamily: "'Oswald', sans-serif", fontWeight: 700, fontSize: 22,
+        letterSpacing: "0.04em", color: C.ink, lineHeight: 1.1, textTransform: "uppercase",
+      }}>{en}</div>
+      <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{ja}</div>
+    </div>
+  );
+}
+
+function Card({ children, style }) {
+  return (
+    <div style={{
+      background: C.card, borderRadius: 12, padding: 14,
+      border: `1px solid ${C.line}`, ...style,
+    }}>{children}</div>
+  );
+}
+
+function Btn({ children, onClick, variant = "primary", style, disabled }) {
+  const base = {
+    primary: { background: C.blue, color: "#fff", border: "none" },
+    ghost: { background: "transparent", color: C.ink, border: `1px solid ${C.line}` },
+    danger: { background: "transparent", color: C.fw, border: `1px solid ${C.fw}` },
+    green: { background: C.pitchA, color: "#fff", border: "none" },
+  }[variant];
+  return (
+    <button onClick={onClick} disabled={disabled} style={{
+      ...base, borderRadius: 8, padding: "9px 14px", fontSize: 13, fontWeight: 600,
+      cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.4 : 1,
+      fontFamily: "inherit", ...style,
+    }}>{children}</button>
+  );
+}
+
+const inputStyle = {
+  border: `1px solid ${C.line}`, borderRadius: 8, padding: "9px 10px",
+  fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink,
+  outline: "none", width: "100%", boxSizing: "border-box",
+};
+
+/* ================= Members tab ================= */
+function MembersTab({ data, update }) {
+  const [name, setName] = useState("");
+  const [pos, setPos] = useState("CM");
+  const [sub, setSub] = useState([]);
+
+  const add = () => {
+    if (!name.trim()) return;
+    update({
+      members: [...data.members, { id: uid(), name: name.trim(), pos, sub }],
+    });
+    setName(""); setSub([]);
+  };
+  const remove = (id) => {
+    if (!confirm("このメンバーを削除しますか？")) return;
+    update({ members: data.members.filter((m) => m.id !== id) });
+  };
+  const toggleSub = (p) =>
+    setSub((s) => (s.includes(p) ? s.filter((x) => x !== p) : [...s, p]));
+
+  return (
+    <div>
+      <SectionTitle en="Squad List" ja="メンバー登録・削除" />
+      <Card style={{ marginBottom: 14 }}>
+        <input style={inputStyle} placeholder="名前を入力" value={name}
+          onChange={(e) => setName(e.target.value)} />
+        <div style={{ margin: "12px 0 4px", fontSize: 12, color: C.muted }}>メインポジション</div>
+        {Object.entries(POS_GROUPS).map(([g, list]) => (
+          <div key={g} style={{ display: "flex", gap: 5, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
+            <span style={{
+              fontSize: 10, fontWeight: 700, color: GROUP_COLOR[g], width: 24,
+              fontFamily: "'Oswald', sans-serif",
+            }}>{g}</span>
+            {list.map((p) => (
+              <button key={p} onClick={() => { setPos(p); setSub((s) => s.filter((x) => x !== p)); }} style={{
+                padding: "5px 11px", borderRadius: 16, fontSize: 12, fontWeight: 700,
+                fontFamily: "'Oswald', sans-serif", cursor: "pointer",
+                border: `2px solid ${pos === p ? GROUP_COLOR[g] : C.line}`,
+                background: pos === p ? GROUP_COLOR[g] : "#fff",
+                color: pos === p ? "#fff" : C.muted,
+              }}>{p}</button>
+            ))}
+          </div>
+        ))}
+        <div style={{ margin: "10px 0 4px", fontSize: 12, color: C.muted }}>サブポジション（複数可・タップで選択）</div>
+        <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+          {ALL_POS.filter((p) => p !== pos).map((p) => (
+            <button key={p} onClick={() => toggleSub(p)} style={{
+              padding: "4px 10px", borderRadius: 16, fontSize: 11, cursor: "pointer",
+              fontFamily: "'Oswald', sans-serif", fontWeight: 700,
+              border: `1px dashed ${sub.includes(p) ? posColor(p) : C.line}`,
+              background: sub.includes(p) ? `${posColor(p)}18` : "#fff",
+              color: sub.includes(p) ? posColor(p) : C.muted,
+            }}>{p}</button>
+          ))}
+        </div>
+        <Btn onClick={add} style={{ width: "100%", marginTop: 12 }}>メンバーを追加</Btn>
+      </Card>
+
+      {data.members.length === 0 ? (
+        <div style={{ textAlign: "center", color: C.muted, fontSize: 13, padding: 30 }}>
+          まだメンバーがいません。上から追加してください。
+        </div>
+      ) : (
+        <Card style={{ padding: 0, overflow: "hidden" }}>
+          {data.members.map((m, i) => (
+            <div key={m.id} style={{
+              display: "flex", alignItems: "center", gap: 10, padding: "11px 14px",
+              borderTop: i ? `1px solid ${C.line}` : "none",
+            }}>
+              <div style={{
+                width: 30, height: 30, borderRadius: "50%", background: posColor(m.pos),
+                color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+                fontFamily: "'Oswald', sans-serif", fontWeight: 700, fontSize: 13, flexShrink: 0,
+              }}>{m.name.slice(0, 1)}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{m.name}</div>
+                <div style={{ display: "flex", gap: 4, marginTop: 3, flexWrap: "wrap" }}>
+                  <PosBadge pos={m.pos} small />
+                  {(m.sub || []).map((s) => (
+                    <span key={s} style={{
+                      fontSize: 10, color: posColor(s), border: `1px dashed ${posColor(s)}`,
+                      borderRadius: 4, padding: "0 5px", fontWeight: 700,
+                      fontFamily: "'Oswald', sans-serif",
+                    }}>{s}</span>
+                  ))}
+                </div>
+              </div>
+              <button onClick={() => remove(m.id)} style={{
+                background: "none", border: "none", color: C.muted, fontSize: 18,
+                cursor: "pointer", padding: 6,
+              }}>×</button>
+            </div>
+          ))}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/* ================= Tactics board ================= */
+function BoardTab({ data, update }) {
+  const board = data.board || { fname: "4-4-2", tokens: [], showEnemy: false };
+  const [fname, setFname] = useState(board.fname || "4-4-2");
+  const [editId, setEditId] = useState(null);
+  const [guestName, setGuestName] = useState("");
+  const pitchRef = useRef(null);
+  const dragRef = useRef(null); // {id, startX, startY, moved}
+  const tokens = board.tokens || [];
+
+  const setBoard = (patch) => update({ board: { ...board, fname, ...patch } });
+
+  /* 自動割り当て: 完全一致 → サブ一致 → 同グループ → サブ同グループ → 誰でも */
+  const applyFormation = () => {
+    const slots = FORMATIONS[fname];
+    const used = new Set();
+    const pick = (p) => {
+      const g = groupOf(p);
+      const finders = [
+        (m) => m.pos === p,
+        (m) => (m.sub || []).includes(p),
+        (m) => groupOf(m.pos) === g,
+        (m) => (m.sub || []).some((s) => groupOf(s) === g),
+        () => true,
+      ];
+      for (const f of finders) {
+        const m = data.members.find((x) => !used.has(x.id) && f(x));
+        if (m) { used.add(m.id); return m; }
+      }
+      return null;
+    };
+    const ally = slots.map(([p, x, y]) => {
+      const m = pick(p);
+      return {
+        id: uid(), side: "ally", pos: p, x, y,
+        memberId: m ? m.id : null, name: m ? m.name : "未定", guest: false,
+      };
+    });
+    const enemies = tokens.filter((t) => t.side === "enemy");
+    setBoard({ tokens: [...ally, ...enemies] });
+    setEditId(null);
+  };
+
+  const toggleEnemy = () => {
+    if (!board.showEnemy && !tokens.some((t) => t.side === "enemy")) {
+      const enemies = ENEMY_DEFAULT.map(([p, x, y], i) => ({
+        id: uid(), side: "enemy", pos: p, x: 100 - x, y: 100 - y,
+        name: `相手${i + 1}`, memberId: null, guest: false,
+      }));
+      setBoard({ tokens: [...tokens, ...enemies], showEnemy: true });
+    } else {
+      setBoard({ showEnemy: !board.showEnemy });
+    }
+  };
+
+  const addGuest = () => {
+    setBoard({
+      tokens: [...tokens, {
+        id: uid(), side: "ally", pos: "CM", x: 50, y: 50,
+        memberId: null, name: "助っ人", guest: true,
+      }],
+    });
+  };
+
+  /* drag & tap */
+  const onPointerDown = (e, id) => {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = { id, sx: e.clientX, sy: e.clientY, moved: false };
+  };
+  const onPointerMove = (e) => {
+    const d = dragRef.current;
+    if (!d || !pitchRef.current) return;
+    if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 6) d.moved = true;
+    if (!d.moved) return;
+    const r = pitchRef.current.getBoundingClientRect();
+    const x = Math.max(2, Math.min(98, ((e.clientX - r.left) / r.width) * 100));
+    const y = Math.max(2, Math.min(98, ((e.clientY - r.top) / r.height) * 100));
+    setBoard({ tokens: tokens.map((t) => (t.id === d.id ? { ...t, x, y } : t)) });
+  };
+  const onPointerUp = () => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    if (d && !d.moved) { setEditId(d.id); setGuestName(""); }
+  };
+
+  const editToken = tokens.find((t) => t.id === editId);
+
+  const assignMember = (memberId) => {
+    const m = data.members.find((x) => x.id === memberId);
+    if (!m) return;
+    setBoard({
+      tokens: tokens.map((t) => {
+        if (t.id === editId) return { ...t, memberId: m.id, name: m.name, guest: false };
+        if (t.memberId === m.id) return { ...t, memberId: null, name: "未定" }; // 二重配置解消
+        return t;
+      }),
+    });
+    setEditId(null);
+  };
+  const setGuest = () => {
+    if (!guestName.trim()) return;
+    setBoard({
+      tokens: tokens.map((t) =>
+        t.id === editId ? { ...t, memberId: null, name: guestName.trim(), guest: true } : t
+      ),
+    });
+    setEditId(null); setGuestName("");
+  };
+  const renameEnemy = () => {
+    if (!guestName.trim()) return;
+    setBoard({
+      tokens: tokens.map((t) => (t.id === editId ? { ...t, name: guestName.trim() } : t)),
+    });
+    setEditId(null); setGuestName("");
+  };
+  const clearToken = () => {
+    setBoard({
+      tokens: tokens.map((t) =>
+        t.id === editId ? { ...t, memberId: null, name: "未定", guest: false } : t
+      ),
+    });
+    setEditId(null);
+  };
+  const deleteToken = () => {
+    setBoard({ tokens: tokens.filter((t) => t.id !== editId) });
+    setEditId(null);
+  };
+  const changePos = (p) => {
+    setBoard({ tokens: tokens.map((t) => (t.id === editId ? { ...t, pos: p } : t)) });
+  };
+
+  const visible = tokens.filter((t) => t.side === "ally" || board.showEnemy);
+  const assignedIds = new Set(tokens.filter((t) => t.memberId).map((t) => t.memberId));
+
+  return (
+    <div>
+      <SectionTitle en="Tactics Board" ja="フォーメーション作成・戦術ボード（11人制）" />
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <select value={fname} onChange={(e) => setFname(e.target.value)}
+          style={{ ...inputStyle, flex: 1 }}>
+          {Object.keys(FORMATIONS).map((k) => (
+            <option key={k} value={k}>{k}</option>
+          ))}
+        </select>
+        <Btn variant="green" onClick={applyFormation}>自動配置</Btn>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        <Btn variant="ghost" onClick={addGuest} style={{ flex: 1 }}>＋ 助っ人を追加</Btn>
+        <Btn variant={board.showEnemy ? "primary" : "ghost"} onClick={toggleEnemy} style={{ flex: 1 }}>
+          {board.showEnemy ? "相手チームを隠す" : "相手チームを表示"}
+        </Btn>
+      </div>
+      <div style={{ fontSize: 11, color: C.muted, marginBottom: 10 }}>
+        駒をタップ → 選手の選択・助っ人の名前編集。ドラッグで自由に移動できます。
+      </div>
+
+      <div ref={pitchRef}
+        onPointerMove={onPointerMove} onPointerUp={onPointerUp}
+        style={{
+          position: "relative", width: "100%", aspectRatio: "3/4",
+          borderRadius: 12, overflow: "hidden", touchAction: "none",
+          background: `repeating-linear-gradient(0deg, ${C.pitchA} 0 12.5%, ${C.pitchB} 12.5% 25%)`,
+        }}>
+        <svg viewBox="0 0 300 400" style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
+          <g stroke={C.chalk} strokeWidth="2" fill="none">
+            <rect x="8" y="8" width="284" height="384" />
+            <line x1="8" y1="200" x2="292" y2="200" />
+            <circle cx="150" cy="200" r="34" />
+            <rect x="75" y="8" width="150" height="56" />
+            <rect x="75" y="336" width="150" height="56" />
+            <rect x="112" y="8" width="76" height="22" />
+            <rect x="112" y="370" width="76" height="22" />
+          </g>
+        </svg>
+        {visible.map((t) => (
+          <div key={t.id}
+            onPointerDown={(e) => onPointerDown(e, t.id)}
+            style={{
+              position: "absolute", left: `${t.x}%`, top: `${t.y}%`,
+              transform: "translate(-50%,-50%)", touchAction: "none",
+              display: "flex", flexDirection: "column", alignItems: "center",
+              cursor: "grab", userSelect: "none",
+              zIndex: t.id === editId ? 3 : 1,
+            }}>
+            <div style={{
+              width: 34, height: 34, borderRadius: "50%",
+              background: t.side === "enemy" ? C.enemy : posColor(t.pos),
+              border: t.id === editId
+                ? "3px solid #FFE24A"
+                : t.guest
+                  ? "2px dashed rgba(255,255,255,0.95)"
+                  : "2px solid rgba(255,255,255,0.9)",
+              boxShadow: "0 2px 6px rgba(0,0,0,0.35)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: "#fff", fontFamily: "'Oswald', sans-serif", fontWeight: 700, fontSize: 11,
+            }}>{t.side === "enemy" ? "敵" : t.pos}</div>
+            <div style={{
+              marginTop: 2, fontSize: 10, fontWeight: 700, color: "#fff",
+              background: "rgba(0,0,0,0.45)", borderRadius: 4, padding: "1px 5px",
+              maxWidth: 72, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>{t.guest ? "⚡" : ""}{t.name}</div>
+          </div>
+        ))}
+        {tokens.filter((t) => t.side === "ally").length === 0 && (
+          <div style={{
+            position: "absolute", inset: 0, display: "flex", alignItems: "center",
+            justifyContent: "center", color: "rgba(255,255,255,0.8)", fontSize: 13,
+          }}>フォーメーションを選んで「自動配置」</div>
+        )}
+      </div>
+
+      {/* ===== 駒エディタ（ボトムシート） ===== */}
+      {editToken && (
+        <div style={{
+          position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 50,
+          background: "#fff", borderRadius: "16px 16px 0 0",
+          boxShadow: "0 -6px 24px rgba(0,0,0,0.18)",
+          padding: "16px 16px calc(16px + env(safe-area-inset-bottom))",
+          maxWidth: 560, margin: "0 auto",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, flex: 1 }}>
+              {editToken.side === "enemy" ? "相手の駒を編集" : "この駒に選手を割り当て"}
+            </div>
+            <button onClick={() => setEditId(null)} style={{
+              background: "none", border: "none", fontSize: 20, color: C.muted, cursor: "pointer",
+            }}>×</button>
+          </div>
+
+          {editToken.side === "ally" && (
+            <>
+              <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>ポジション表記</div>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 12 }}>
+                {ALL_POS.map((p) => (
+                  <button key={p} onClick={() => changePos(p)} style={{
+                    padding: "3px 8px", borderRadius: 12, fontSize: 10, fontWeight: 700,
+                    fontFamily: "'Oswald', sans-serif", cursor: "pointer",
+                    border: `1px solid ${editToken.pos === p ? posColor(p) : C.line}`,
+                    background: editToken.pos === p ? posColor(p) : "#fff",
+                    color: editToken.pos === p ? "#fff" : C.muted,
+                  }}>{p}</button>
+                ))}
+              </div>
+
+              <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>登録メンバーから選ぶ</div>
+              <div style={{ maxHeight: 160, overflow: "auto", border: `1px solid ${C.line}`, borderRadius: 8, marginBottom: 12 }}>
+                {data.members.length === 0 && (
+                  <div style={{ padding: 12, fontSize: 12, color: C.muted }}>メンバー未登録です</div>
+                )}
+                {data.members.map((m) => (
+                  <button key={m.id} onClick={() => assignMember(m.id)} style={{
+                    display: "flex", alignItems: "center", gap: 8, width: "100%",
+                    padding: "9px 12px", background: editToken.memberId === m.id ? `${C.blue}12` : "#fff",
+                    border: "none", borderBottom: `1px solid ${C.line}`, cursor: "pointer",
+                    fontFamily: "inherit", textAlign: "left",
+                  }}>
+                    <PosBadge pos={m.pos} small />
+                    <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{m.name}</span>
+                    {assignedIds.has(m.id) && editToken.memberId !== m.id && (
+                      <span style={{ fontSize: 10, color: C.muted }}>配置中→移動</span>
+                    )}
+                    {editToken.memberId === m.id && (
+                      <span style={{ fontSize: 11, color: C.blue, fontWeight: 700 }}>✓</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>または助っ人の名前を入力</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <input style={{ ...inputStyle, flex: 1 }} placeholder="例: 田中（助っ人）"
+                  value={guestName} onChange={(e) => setGuestName(e.target.value)} />
+                <Btn variant="green" onClick={setGuest}>設定</Btn>
+              </div>
+
+              <div style={{ display: "flex", gap: 8 }}>
+                <Btn variant="ghost" onClick={clearToken} style={{ flex: 1 }}>未定に戻す</Btn>
+                {editToken.guest && (
+                  <Btn variant="danger" onClick={deleteToken} style={{ flex: 1 }}>駒を削除</Btn>
+                )}
+              </div>
+            </>
+          )}
+
+          {editToken.side === "enemy" && (
+            <>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <input style={{ ...inputStyle, flex: 1 }} placeholder={editToken.name}
+                  value={guestName} onChange={(e) => setGuestName(e.target.value)} />
+                <Btn onClick={renameEnemy}>名前変更</Btn>
+              </div>
+              <Btn variant="danger" onClick={deleteToken} style={{ width: "100%" }}>この駒を削除</Btn>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ================= Rotation tab ================= */
+function RotationTab({ data }) {
+  const [attend, setAttend] = useState([]);
+  const [fieldCount, setFieldCount] = useState(11);
+  const [totalMin, setTotalMin] = useState(60);
+  const [segments, setSegments] = useState(6);
+  const [gkId, setGkId] = useState("");
+  const [result, setResult] = useState(null);
+
+  const toggle = (id) =>
+    setAttend((a) => (a.includes(id) ? a.filter((x) => x !== id) : [...a, id]));
+
+  const run = () => {
+    const players = data.members
+      .filter((m) => attend.includes(m.id))
+      .map((m) => ({ ...m, _r: Math.random() }));
+    if (players.length === 0) return;
+    setResult(buildRotation(players, fieldCount, totalMin, segments, gkId || null));
+  };
+
+  const attendees = data.members.filter((m) => attend.includes(m.id));
+  const times = result ? Object.values(result.time) : [];
+  const maxT = times.length ? Math.max(...times) : 0;
+  const minT = times.length ? Math.min(...times) : 0;
+
+  return (
+    <div>
+      <SectionTitle en="Fair Play Time" ja="均等出場時間ローテーション自動作成" />
+      <Card style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 12, color: C.muted, marginBottom: 8 }}>今日の参加者を選択（{attend.length}名）</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {data.members.map((m) => (
+            <button key={m.id} onClick={() => toggle(m.id)} style={{
+              padding: "6px 12px", borderRadius: 20, fontSize: 13, cursor: "pointer",
+              fontWeight: 600, fontFamily: "inherit",
+              border: `2px solid ${attend.includes(m.id) ? C.blue : C.line}`,
+              background: attend.includes(m.id) ? C.blue : "#fff",
+              color: attend.includes(m.id) ? "#fff" : C.muted,
+            }}>{m.name}</button>
+          ))}
+          {data.members.length === 0 && (
+            <span style={{ fontSize: 13, color: C.muted }}>先にメンバーを登録してください</span>
+          )}
+        </div>
+      </Card>
+      <Card style={{ marginBottom: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+          <label style={{ fontSize: 11, color: C.muted }}>同時出場人数
+            <input type="number" value={fieldCount} min={1}
+              onChange={(e) => setFieldCount(+e.target.value)} style={{ ...inputStyle, marginTop: 4 }} />
+          </label>
+          <label style={{ fontSize: 11, color: C.muted }}>試合時間(分)
+            <input type="number" value={totalMin} min={1}
+              onChange={(e) => setTotalMin(+e.target.value)} style={{ ...inputStyle, marginTop: 4 }} />
+          </label>
+          <label style={{ fontSize: 11, color: C.muted }}>交代枠(分割数)
+            <input type="number" value={segments} min={1}
+              onChange={(e) => setSegments(+e.target.value)} style={{ ...inputStyle, marginTop: 4 }} />
+          </label>
+        </div>
+        <label style={{ fontSize: 11, color: C.muted, display: "block", marginTop: 10 }}>
+          固定GK（フル出場・任意）
+          <select value={gkId} onChange={(e) => setGkId(e.target.value)}
+            style={{ ...inputStyle, marginTop: 4 }}>
+            <option value="">なし（GKも交代）</option>
+            {attendees.map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+        </label>
+        <Btn variant="green" onClick={run} disabled={attend.length === 0}
+          style={{ width: "100%", marginTop: 12 }}>ローテーション表を作成</Btn>
+      </Card>
+
+      {result && (
+        <Card style={{ padding: 0, overflow: "auto" }}>
+          <div style={{ padding: "10px 14px", fontSize: 12, color: C.muted }}>
+            1枠 {Math.round(result.segMin * 10) / 10}分 ／ 出場時間の差 最大{" "}
+            <b style={{ color: maxT - minT > result.segMin ? C.fw : C.pitchA }}>
+              {Math.round((maxT - minT) * 10) / 10}分
+            </b>
+          </div>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: C.bg }}>
+                <th style={{ padding: "6px 10px", textAlign: "left", position: "sticky", left: 0, background: C.bg }}>選手</th>
+                {result.grid.map((_, i) => (
+                  <th key={i} style={{ padding: "6px 6px", fontFamily: "'Oswald', sans-serif" }}>{i + 1}</th>
+                ))}
+                <th style={{ padding: "6px 10px" }}>分</th>
+              </tr>
+            </thead>
+            <tbody>
+              {attendees.map((m) => (
+                <tr key={m.id} style={{ borderTop: `1px solid ${C.line}` }}>
+                  <td style={{
+                    padding: "6px 10px", fontWeight: 600, whiteSpace: "nowrap",
+                    position: "sticky", left: 0, background: "#fff",
+                  }}>
+                    {m.name}{gkId === m.id ? " 🧤" : ""}
+                  </td>
+                  {result.grid.map((seg, i) => (
+                    <td key={i} style={{ textAlign: "center", padding: "6px 4px" }}>
+                      {seg.includes(m.id)
+                        ? <span style={{ color: C.pitchA, fontWeight: 700 }}>●</span>
+                        : <span style={{ color: C.line }}>−</span>}
+                    </td>
+                  ))}
+                  <td style={{
+                    textAlign: "center", fontFamily: "'Oswald', sans-serif", fontWeight: 700,
+                  }}>{Math.round(result.time[m.id])}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/* ================= App shell ================= */
+function App() {
+  const [data, setData] = useState({ members: [], board: null });
+  const [tab, setTab] = useState("members");
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORE_KEY);
+      if (raw) setData(JSON.parse(raw));
+    } catch (e) { console.error("load failed", e); }
+    setLoaded(true);
+  }, []);
+
+  const update = useCallback((patch) => {
+    setData((prev) => {
+      const next = { ...prev, ...patch };
+      try { localStorage.setItem(STORE_KEY, JSON.stringify(next)); }
+      catch (e) { console.error("save failed", e); }
+      return next;
+    });
+  }, []);
+
+  const tabs = [
+    ["members", "👥", "メンバー"],
+    ["board", "📋", "ボード"],
+    ["rotation", "⏱", "出場時間"],
+  ];
+
+  if (!loaded) return (
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex",
+      alignItems: "center", justifyContent: "center", color: C.muted }}>読み込み中…</div>
+  );
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: C.bg, color: C.ink,
+      fontFamily: "'Noto Sans JP', sans-serif",
+    }}>
+      <header style={{
+        background: C.ink, color: "#fff", padding: "14px 18px 12px",
+        display: "flex", alignItems: "baseline", gap: 10,
+      }}>
+        <div style={{
+          fontFamily: "'Oswald', sans-serif", fontWeight: 700, fontSize: 20,
+          letterSpacing: "0.08em",
+        }}>SQUAD MANAGER</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>チーム運営ノート</div>
+      </header>
+
+      <main style={{ padding: "16px 14px 90px", maxWidth: 560, margin: "0 auto" }}>
+        {tab === "members" && <MembersTab data={data} update={update} />}
+        {tab === "board" && <BoardTab data={data} update={update} />}
+        {tab === "rotation" && <RotationTab data={data} />}
+      </main>
+
+      <nav style={{
+        position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff",
+        borderTop: `1px solid ${C.line}`, display: "flex",
+        paddingBottom: "env(safe-area-inset-bottom)", zIndex: 40,
+      }}>
+        {tabs.map(([k, icon, label]) => (
+          <button key={k} onClick={() => setTab(k)} style={{
+            flex: 1, padding: "10px 0 8px", background: "none", border: "none",
+            cursor: "pointer", fontFamily: "inherit",
+            color: tab === k ? C.blue : C.muted,
+            borderTop: `2px solid ${tab === k ? C.blue : "transparent"}`,
+          }}>
+            <div style={{ fontSize: 18 }}>{icon}</div>
+            <div style={{ fontSize: 10, fontWeight: 700, marginTop: 2 }}>{label}</div>
+          </button>
+        ))}
+      </nav>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
+</script>
+</body>
+</html>
