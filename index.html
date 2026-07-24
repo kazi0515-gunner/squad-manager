@@ -153,7 +153,7 @@ var ui = {
   rot: { attend: [], field: 11, total: 60, seg: 4, gk: "", opts: {}, guests: [], presetIdx: null },
   eventId: null, evForm: null, showEvents: false,
   rotResult: null,
-  showOpts: false, showAttend: true, rotView: "table", showNames: false,
+  showOpts: false, showAttend: true, rotView: "table", showNames: false, shotCols: null,
   em: null
 };
 
@@ -436,8 +436,24 @@ function rRotResult(){
   r.grid.forEach(function(seg){ seg.forEach(function(id){ if (time[id] != null) time[id] += r.segMin; }); });
   var h = '<div class="row" style="margin-bottom:8px">';
   h += '<button class="btn sm grow ' + (ui.rotView === "table" ? "pri" : "gho") + '" onclick="ui.rotView=\'table\';render()">表で編集</button>';
-  h += '<button class="btn sm grow ' + (ui.rotView === "match" ? "pri" : "gho") + '" onclick="ui.rotView=\'match\';render()">試合ごと表示</button></div>';
+  h += '<button class="btn sm grow ' + (ui.rotView === "match" ? "pri" : "gho") + '" onclick="ui.rotView=\'match\';render()">試合ごと</button>';
+  h += '<button class="btn sm grow ' + (ui.rotView === "shot" ? "pri" : "gho") + '" onclick="ui.rotView=\'shot\';render()">📸まとめ</button></div>';
 
+  if (ui.rotView === "shot"){
+    h += '<div class="card" style="padding:10px">';
+    h += '<div class="row" style="margin-bottom:8px;align-items:center"><span class="lbl-s">レイアウト</span>';
+    [[0,"自動"],[1,"1列"],[2,"2列"],[3,"3列"]].forEach(function(c){
+      var on = (ui.shotCols || 0) === c[0];
+      h += '<button class="btn sm ' + (on ? "pri" : "gho") + '" style="flex:1;padding:6px 0" onclick="act.shotCols(' + c[0] + ')">' + c[1] + '</button>';
+    });
+    h += '</div>';
+    h += '<div class="lbl-s" style="margin-bottom:8px">この画面をスクリーンショット、または下のボタンで画像化して長押し保存できます</div>';
+    h += '<div id="shotwrap">' + summarySVG() + '</div>';
+    h += '<div id="shotimg"></div>';
+    h += '<button class="btn grn" style="width:100%;margin-top:10px" onclick="act.makeImage()">🖼 画像化する（長押しで保存）</button>';
+    h += '</div>';
+    return h;
+  }
   if (ui.rotView === "table"){
     /* 交代タイミング */
     h += '<div class="card" style="margin-bottom:8px;padding:10px 14px">';
@@ -473,14 +489,7 @@ function rRotResult(){
     /* 試合ごと表示 */
     h += '<div class="row" style="margin-bottom:8px;align-items:center"><div class="lbl-s grow">選手をタップ → その時間帯だけポジションを入れ替え。黄色枠＝交代で入った選手</div>';
     h += '<button class="btn sm ' + (ui.showNames ? "pri" : "gho") + '" onclick="ui.showNames=!ui.showNames;render()">名前一覧</button></div>';
-    var blocks = [];
-    var s0 = 0;
-    for (var j = 1; j <= r.grid.length; j++){
-      if (j === r.grid.length || r.sub[j]){
-        blocks.push({ from: s0, to: j - 1 });
-        s0 = j;
-      }
-    }
+    var blocks = blockList();
     var prev = null;
     blocks.forEach(function(bl, bi){
       var lineup = r.grid[bl.from];
@@ -578,20 +587,15 @@ function blockPlacement(key, lineup, gkId){
   var ov = (r && r.layout) ? r.layout[key] : null;
   return assignLineup(lineup, baseLayout(), gkId, ov);
 }
-function miniPitch(lineup, gkId, inIds, key){
-  var placed = blockPlacement(key, lineup, gkId);
-  var W = 300, H = 350;
-  var s = '<svg class="minipitch" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">';
-  /* 芝 */
+function pitchBody(placed, gkId, inIds, key, clickable){
+  var W = 300, H = 350, s = "";
   for (var i = 0; i < 8; i++){
     s += '<rect x="0" y="' + (i * 43.75) + '" width="300" height="43.76" fill="' + (i % 2 ? "#297246" : "#2E7D4F") + '"/>';
   }
-  /* ライン */
   s += '<g stroke="rgba(255,255,255,.8)" stroke-width="2" fill="none">';
   s += '<rect x="6" y="6" width="288" height="338" rx="2"/><line x1="6" y1="175" x2="294" y2="175"/><circle cx="150" cy="175" r="30"/>';
   s += '<rect x="80" y="6" width="140" height="46"/><rect x="80" y="298" width="140" height="46"/>';
   s += '<rect x="112" y="6" width="76" height="18"/><rect x="112" y="326" width="76" height="18"/></g>';
-  /* 選手 */
   placed.forEach(function(p){
     var m = memById(p.id);
     var nm = (m ? m.name : "?") + (gkId === p.id ? "🧤" : "");
@@ -604,14 +608,93 @@ function miniPitch(lineup, gkId, inIds, key){
     if (cx > W - 20) cx = W - 20;
     var fs = lab.length > 2 ? 8 : 11;
     var nw = nm.replace(/[\u0020-\u007e]/g, "  ").length * 5 + 8;
-    s += '<g style="cursor:pointer" onclick="act.slotTap(\'' + key + '\',' + p.si + ')">';
+    s += clickable ? '<g style="cursor:pointer" onclick="act.slotTap(\'' + key + '\',' + p.si + ')">' : '<g>';
     s += '<circle cx="' + cx + '" cy="' + cy + '" r="12" fill="' + col + '" stroke="' + (isIn ? "#FFE24A" : "#ffffff") + '" stroke-width="' + (isIn ? 3 : 2) + '"/>';
     s += '<text x="' + cx + '" y="' + (cy + 4) + '" font-size="' + fs + '" font-weight="700" fill="#fff" text-anchor="middle" font-family="Avenir Next Condensed, Arial Narrow, sans-serif">' + esc(lab) + '</text>';
     s += '<rect x="' + (cx - nw / 2) + '" y="' + (cy + 14) + '" width="' + nw + '" height="13" rx="3" fill="rgba(0,0,0,.55)"/>';
     s += '<text x="' + cx + '" y="' + (cy + 23.5) + '" font-size="9" font-weight="700" fill="#fff" text-anchor="middle">' + esc(nm) + '</text>';
     s += '</g>';
   });
-  return s + '</svg>';
+  return s;
+}
+function miniPitch(lineup, gkId, inIds, key){
+  var placed = blockPlacement(key, lineup, gkId);
+  return '<svg class="minipitch" viewBox="0 0 300 350" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">'
+    + pitchBody(placed, gkId, inIds, key, true) + '</svg>';
+}
+/* ---------- 1画面まとめ（スクショ用） ---------- */
+function blockList(){
+  var r = ui.rotResult, out = [], s0 = 0;
+  if (!r) return out;
+  for (var j = 1; j <= r.grid.length; j++){
+    if (j === r.grid.length || r.sub[j]){ out.push({ from: s0, to: j - 1 }); s0 = j; }
+  }
+  return out;
+}
+function autoCols(n, cellW, cellH){
+  /* スマホ画面(縦長)に収まりやすい縦横比 0.5 に最も近い列数を選ぶ */
+  var best = 1, bestScore = 1e9;
+  for (var c = 1; c <= Math.min(3, n); c++){
+    var rws = Math.ceil(n / c);
+    var w = c * cellW + (c - 1) * 12;
+    var hh = rws * cellH + (rws - 1) * 12;
+    var score = Math.abs(Math.log((w / hh) / 0.5));
+    if (score < bestScore - 0.001){ bestScore = score; best = c; }
+  }
+  return best;
+}
+function summarySVG(){
+  var r = ui.rotResult;
+  var blocks = blockList();
+  var n = blocks.length;
+  var PW = 300, PH = 350, GAP = 12, PAD = 14;
+  var HEAD = 22, FOOT = 30, cellH = HEAD + PH + FOOT;
+  var top = 62;
+  var cols = ui.shotCols ? Math.min(ui.shotCols, n) : autoCols(n, PW, cellH);
+  var rows = Math.ceil(n / cols);
+  var W = PAD * 2 + cols * PW + (cols - 1) * GAP;
+  var H = top + rows * cellH + (rows - 1) * GAP + PAD;
+  var ev = null;
+  if (ui.eventId) S.events.forEach(function(x){ if (x.id === ui.eventId) ev = x; });
+  var title = ev ? evLabel(ev) : "ローテーション表";
+  var sub = ui.rot.total + "分 ／ " + ui.rot.attend.length + "名 ／ 1枠" + (Math.round(r.segMin * 10) / 10) + "分";
+
+  var s = '<svg id="shotsvg" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block;border-radius:10px">';
+  s += '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="#ffffff"/>';
+  s += '<rect x="0" y="0" width="' + W + '" height="46" fill="#16211B"/>';
+  s += '<text x="' + PAD + '" y="29" font-size="17" font-weight="700" fill="#ffffff">' + esc(title) + '</text>';
+  s += '<text x="' + PAD + '" y="58" font-size="11" fill="#66736B">' + esc(sub) + '</text>';
+
+  var lastRowCount = n - (rows - 1) * cols;
+  var prev = null;
+  blocks.forEach(function(bl, bi){
+    var col = bi % cols, row = Math.floor(bi / cols);
+    var offset = 0;
+    if (row === rows - 1 && lastRowCount < cols){
+      offset = (cols - lastRowCount) * (PW + GAP) / 2; /* 最終行を中央寄せ */
+    }
+    var ox = PAD + col * (PW + GAP) + offset;
+    var oy = top + row * (cellH + GAP);
+    var lineup = r.grid[bl.from];
+    var t0 = Math.round(bl.from * r.segMin), t1 = Math.round((bl.to + 1) * r.segMin);
+    var inIds = prev ? lineup.filter(function(id){ return prev.indexOf(id) < 0; }) : [];
+    var outIds = prev ? prev.filter(function(id){ return lineup.indexOf(id) < 0; }) : [];
+    s += '<text x="' + ox + '" y="' + (oy + 15) + '" font-size="13" font-weight="700" fill="#16211B">第' + (bi + 1) + 'ブロック ' + t0 + '〜' + t1 + '分</text>';
+    s += '<g transform="translate(' + ox + ',' + (oy + HEAD) + ')">';
+    s += pitchBody(blockPlacement(String(bl.from), lineup, r.gk), r.gk, inIds, String(bl.from), false);
+    s += '</g>';
+    function nms(ids){ return ids.map(function(id){ var m = memById(id); return m ? m.name : "?"; }).join("、"); }
+    if (outIds.length || inIds.length){
+      var y2 = oy + HEAD + PH + 14;
+      s += '<text x="' + ox + '" y="' + y2 + '" font-size="10" font-weight="700" fill="#C63B3B">OUT ' + esc(nms(outIds)) + '</text>';
+      s += '<text x="' + ox + '" y="' + (y2 + 13) + '" font-size="10" font-weight="700" fill="#2E7D4F">IN ' + esc(nms(inIds)) + '</text>';
+    } else {
+      s += '<text x="' + ox + '" y="' + (oy + HEAD + PH + 14) + '" font-size="10" fill="#66736B">スタート</text>';
+    }
+    prev = lineup;
+  });
+  s += '</svg>';
+  return s;
 }
 
 /* ---------- bottom sheet ---------- */
@@ -1176,6 +1259,37 @@ var act = {
     ui.rotResult = r;
     ui.rotView = "table";
     render();
+  },
+  shotCols: function(c){ ui.shotCols = c || null; render(); },
+  makeImage: function(){
+    var el = document.getElementById("shotsvg");
+    var box = document.getElementById("shotimg");
+    if (!el || !box) return;
+    try {
+      var xml = new XMLSerializer().serializeToString(el);
+      var vb = el.getAttribute("viewBox").split(" ");
+      var w = +vb[2], hh = +vb[3];
+      var sc = w < 500 ? 3 : (w < 800 ? 2.5 : 2); /* 小さい図ほど高解像度で書き出す */
+      var url = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(xml)));
+      var img = new Image();
+      img.onload = function(){
+        var c = document.createElement("canvas");
+        c.width = w * sc; c.height = hh * sc;
+        var ctx = c.getContext("2d");
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        try {
+          box.innerHTML = '<div class="lbl-s" style="margin:10px 0 4px">↓ この画像を長押し →「写真に追加」で保存できます</div><img src="' + c.toDataURL("image/png") + '" style="width:100%;border-radius:10px;border:1px solid var(--line)">';
+          document.getElementById("shotwrap").style.display = "none";
+        } catch(e2){ box.innerHTML = '<div class="lbl-s" style="color:var(--fw);margin-top:8px">画像化できませんでした。画面のスクリーンショットをご利用ください。</div>'; }
+      };
+      img.onerror = function(){
+        box.innerHTML = '<div class="lbl-s" style="color:var(--fw);margin-top:8px">画像化できませんでした。画面のスクリーンショットをご利用ください。</div>';
+      };
+      img.src = url;
+    } catch(e){
+      box.innerHTML = '<div class="lbl-s" style="color:var(--fw);margin-top:8px">画像化できませんでした。画面のスクリーンショットをご利用ください。</div>';
+    }
   },
   slotTap: function(key, si){
     ui.sheet = { type: "slot", key: key, si: si };
