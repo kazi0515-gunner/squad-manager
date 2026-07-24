@@ -77,6 +77,12 @@
   .mlist button{display:flex;align-items:center;gap:8px;width:100%;padding:10px 12px;background:#fff;border:none;border-bottom:1px solid var(--line);cursor:pointer;font-family:inherit;text-align:left;font-size:14px;}
   .optrow{display:flex;align-items:center;gap:6px;padding:8px 0;border-top:1px solid var(--line);font-size:12px;flex-wrap:wrap;}
   .optrow select,.optrow input{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:13px;font-family:inherit;background:#fff;}
+  .minipitch{position:relative;width:100%;aspect-ratio:3/3.5;border-radius:10px;overflow:hidden;
+    background:repeating-linear-gradient(0deg,var(--pitchA) 0 12.5%,var(--pitchB) 12.5% 25%);}
+  .mtok{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;}
+  .mtok .d{width:26px;height:26px;border-radius:50%;border:2px solid rgba(255,255,255,.9);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:10px;font-family:"Avenir Next Condensed","Arial Narrow",sans-serif;box-shadow:0 2px 5px rgba(0,0,0,.35);}
+  .mtok.in .d{border:3px solid #FFE24A;}
+  .mtok .n{margin-top:1px;font-size:9px;font-weight:700;color:#fff;background:rgba(0,0,0,.5);border-radius:3px;padding:0 4px;max-width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .pchip{display:inline-block;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:12px;font-weight:700;margin:2px;}
 </style>
 </head>
@@ -152,7 +158,7 @@ var ui = {
   rot: { attend: [], field: 11, total: 60, seg: 4, gk: "", opts: {}, guests: [], presetIdx: null },
   eventId: null, evForm: null, showEvents: false,
   rotResult: null,
-  showOpts: false, showAttend: true, rotView: "table",
+  showOpts: false, showAttend: true, rotView: "table", showNames: false,
   em: null
 };
 
@@ -470,6 +476,8 @@ function rRotResult(){
     h += '</tbody></table></div>';
   } else {
     /* 試合ごと表示 */
+    h += '<div class="row" style="margin-bottom:8px;align-items:center"><div class="lbl-s grow">選手をタップ → その時間帯だけポジションを入れ替え。黄色枠＝交代で入った選手</div>';
+    h += '<button class="btn sm ' + (ui.showNames ? "pri" : "gho") + '" onclick="ui.showNames=!ui.showNames;render()">名前一覧</button></div>';
     var blocks = [];
     var s0 = 0;
     for (var j = 1; j <= r.grid.length; j++){
@@ -492,19 +500,104 @@ function rRotResult(){
           h += '</div>';
         }
       }
-      h += '<div class="card" style="margin-bottom:8px">';
+      var inIds = prev ? lineup.filter(function(id){ return prev.indexOf(id) < 0; }) : [];
+      h += '<div class="card" style="margin-bottom:8px;padding:10px">';
       h += '<div style="font-weight:800;font-size:13px;margin-bottom:6px">第' + (bi + 1) + 'ブロック <span class="mut" style="font-weight:400">' + t0 + '〜' + t1 + '分（' + lineup.length + '人）</span></div>';
-      h += '<div>';
-      lineup.forEach(function(id){
-        var m = memById(id);
-        if (!m) return;
-        h += '<span class="pchip"' + (r.gk === id ? ' style="border-color:var(--gk);color:var(--gk)"' : "") + '>' + esc(memLabel(m)) + (r.gk === id ? "🧤" : "") + '</span>';
-      });
-      h += '</div></div>';
+      h += miniPitch(lineup, r.gk, inIds, String(bl.from));
+      if (ui.showNames){
+        h += '<div style="margin-top:8px">';
+        lineup.forEach(function(id){
+          var m = memById(id);
+          if (!m) return;
+          h += '<span class="pchip"' + (r.gk === id ? ' style="border-color:var(--gk);color:var(--gk)"' : "") + '>' + esc(memLabel(m)) + (r.gk === id ? "🧤" : "") + '</span>';
+        });
+        h += '</div>';
+      }
+      h += '</div>';
       prev = lineup;
     });
   }
   return h;
+}
+
+/* ---------- mini pitch (試合ごと表示) ---------- */
+function baseLayout(){
+  var ev = null;
+  if (ui.eventId) S.events.forEach(function(x){ if (x.id === ui.eventId) ev = x; });
+  var srcB = ev || S.board;
+  var slots = [];
+  if (srcB && srcB.tokens){
+    srcB.tokens.forEach(function(t){
+      if (t.side !== "ally") return;
+      slots.push({ pos: t.pos, x: t.x, y: srcB.showEnemy ? expand(t.y) : t.y, memberId: t.memberId });
+    });
+  }
+  if (!slots.length){
+    getSlots(ui.fname).forEach(function(sl){ slots.push({ pos: sl[0], x: sl[1], y: sl[2], memberId: null }); });
+  }
+  return slots;
+}
+function assignLineup(lineup, slots, gkId, ov){
+  var result = new Array(slots.length);
+  var rest = lineup.slice();
+  function take(i){ var id = rest[i]; rest.splice(i, 1); return id; }
+  /* 手動指定を最優先 */
+  if (ov){
+    for (var oi in ov){
+      var pid = ov[oi], k2 = rest.indexOf(pid);
+      if (k2 >= 0 && slots[oi]){ result[oi] = pid; rest.splice(k2, 1); }
+    }
+  }
+  /* GKを最優先で固定 */
+  if (gkId && rest.indexOf(gkId) >= 0){
+    for (var g = 0; g < slots.length; g++){
+      if (slots[g].pos === "GK"){ result[g] = gkId; rest.splice(rest.indexOf(gkId), 1); break; }
+    }
+  }
+  /* 元の位置を維持 */
+  slots.forEach(function(s, i){
+    if (result[i] || !s.memberId) return;
+    var k = rest.indexOf(s.memberId);
+    if (k >= 0) result[i] = take(k);
+  });
+  /* 残りをポジション適性で埋める */
+  slots.forEach(function(s, i){
+    if (result[i] || !rest.length) return;
+    var grp = groupOf(s.pos), pick = -1, j, m;
+    for (j = 0; j < rest.length; j++){ m = memById(rest[j]); if (m && m.pos === s.pos){ pick = j; break; } }
+    if (pick < 0) for (j = 0; j < rest.length; j++){ m = memById(rest[j]); if (m && (m.sub || []).indexOf(s.pos) >= 0){ pick = j; break; } }
+    if (pick < 0) for (j = 0; j < rest.length; j++){ m = memById(rest[j]); if (m && groupOf(m.pos) === grp && s.pos !== "GK"){ pick = j; break; } }
+    if (pick < 0 && s.pos !== "GK") pick = 0;
+    if (pick < 0 && rest.length) pick = 0;
+    if (pick >= 0) result[i] = take(pick);
+  });
+  var out = [];
+  slots.forEach(function(s, i){ if (result[i]) out.push({ id: result[i], pos: s.pos, x: s.x, y: s.y, si: i }); });
+  rest.forEach(function(id, i){
+    out.push({ id: id, pos: "SUB", x: 12 + i * 14, y: 97, si: -1 });
+  });
+  return out;
+}
+function blockPlacement(key, lineup, gkId){
+  var r = ui.rotResult;
+  var ov = (r && r.layout) ? r.layout[key] : null;
+  return assignLineup(lineup, baseLayout(), gkId, ov);
+}
+function miniPitch(lineup, gkId, inIds, key){
+  var placed = blockPlacement(key, lineup, gkId);
+  var h = '<div class="minipitch">';
+  h += '<svg viewBox="0 0 300 350" style="position:absolute;inset:0;width:100%;height:100%"><g stroke="rgba(255,255,255,.8)" stroke-width="2" fill="none"><rect x="6" y="6" width="288" height="338"/><line x1="6" y1="175" x2="294" y2="175"/><circle cx="150" cy="175" r="30"/><rect x="80" y="6" width="140" height="46"/><rect x="80" y="298" width="140" height="46"/></g></svg>';
+  placed.forEach(function(p){
+    var m = memById(p.id);
+    var nm = m ? m.name : "?";
+    var lab = (m && m.num) ? m.num : (p.pos === "SUB" ? "＋" : p.pos);
+    var col = p.pos === "SUB" ? "#6B7480" : pc(p.pos);
+    var isIn = inIds && inIds.indexOf(p.id) >= 0;
+    h += '<div class="mtok' + (isIn ? " in" : "") + '" style="left:' + p.x + '%;top:' + p.y + '%;cursor:pointer" onclick="act.slotTap(\'' + key + '\',' + p.si + ')">';
+    h += '<div class="d" style="background:' + col + '">' + esc(lab) + '</div>';
+    h += '<div class="n">' + esc(nm) + (gkId === p.id ? "🧤" : "") + '</div></div>';
+  });
+  return h + '</div>';
 }
 
 /* ---------- bottom sheet ---------- */
@@ -519,6 +612,38 @@ function renderSheet(){
   var el = document.getElementById("sheet");
   if (!ui.sheet){ el.className = ""; el.innerHTML = ""; return; }
   var h = "";
+  if (ui.sheet.type === "slot"){
+    var r = ui.rotResult;
+    var key = ui.sheet.key, si = ui.sheet.si;
+    if (!r){ ui.sheet = null; el.className = ""; return; }
+    var lineup = r.grid[+key] || [];
+    var placed = blockPlacement(key, lineup, r.gk);
+    var cur = null;
+    placed.forEach(function(p){ if (p.si === si) cur = p; });
+    if (!cur){ placed.forEach(function(p){ if (p.si === -1) cur = p; }); }
+    if (!cur){ ui.sheet = null; el.className = ""; return; }
+    var cm = memById(cur.id);
+    var segMin = r.segMin;
+    var e2 = +key; while (e2 + 1 < r.grid.length && !r.sub[e2 + 1]) e2++;
+    h += '<div style="display:flex;align-items:center;margin-bottom:4px"><div style="font-weight:700;font-size:15px" class="grow">ポジションを入れ替え</div><button class="xbtn" style="font-size:20px" onclick="act.closeSheet()">×</button></div>';
+    h += '<div class="lbl-s" style="margin-bottom:10px">' + Math.round(+key * segMin) + '〜' + Math.round((e2 + 1) * segMin) + '分の時間帯のみ変更されます</div>';
+    h += '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg);border-radius:8px;margin-bottom:12px">';
+    h += '<span class="badge" style="background:' + pc(cur.pos) + '">' + esc(cur.pos) + '</span>';
+    h += '<span style="font-weight:700;font-size:14px">' + esc(cm ? memLabel(cm) : "?") + '</span></div>';
+    h += '<div class="lbl-s" style="margin-bottom:4px">入れ替える相手を選ぶ</div>';
+    h += '<div class="mlist" style="max-height:230px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-bottom:12px">';
+    placed.forEach(function(p){
+      if (p.si === si) return;
+      var m2 = memById(p.id);
+      h += '<button onclick="act.swapSlots(\'' + key + '\',' + si + ',' + p.si + ')">';
+      h += '<span class="badge" style="background:' + (p.pos === "SUB" ? "#6B7480" : pc(p.pos)) + '">' + esc(p.pos) + '</span>';
+      h += '<span class="grow" style="font-weight:700;font-size:13px">' + esc(m2 ? memLabel(m2) : "?") + '</span>';
+      h += '<span style="font-size:13px;color:var(--pitchA);font-weight:800">↔</span></button>';
+    });
+    h += '</div>';
+    h += '<div class="row"><button class="btn gho grow" onclick="act.clearLayout(\'' + key + '\')">この時間帯を自動配置に戻す</button></div>';
+    el.innerHTML = h; el.className = "show"; return;
+  }
   if (ui.sheet.type === "event"){
     var ef = ui.evForm;
     h += '<div style="display:flex;align-items:center;margin-bottom:12px"><div style="font-weight:700;font-size:15px" class="grow">' + (ef.id ? "試合情報を編集" : "この編成を試合として保存") + '</div><button class="xbtn" style="font-size:20px" onclick="act.closeSheet()">×</button></div>';
@@ -1033,8 +1158,40 @@ var act = {
     r.gk = ui.rot.gk || null;
     r.sub = [];
     for (var i = 0; i < r.grid.length; i++) r.sub.push(true);
+    r.layout = {};
     ui.rotResult = r;
     ui.rotView = "table";
+    render();
+  },
+  slotTap: function(key, si){
+    ui.sheet = { type: "slot", key: key, si: si };
+    renderSheet();
+  },
+  swapSlots: function(key, si, sj){
+    var r = ui.rotResult;
+    if (!r) return;
+    if (!r.layout) r.layout = {};
+    var lineup = r.grid[+key] || [];
+    var placed = blockPlacement(key, lineup, r.gk);
+    var map = {};
+    placed.forEach(function(p){ if (p.si >= 0) map[p.si] = p.id; });
+    var a = null, b2 = null;
+    placed.forEach(function(p){ if (p.si === si) a = p; if (p.si === sj) b2 = p; });
+    if (!a || !b2){ ui.sheet = null; render(); return; }
+    if (sj === -1){
+      /* 控え表示枠との入替 = そのスロットに控えの選手を入れる */
+      map[si] = b2.id;
+    } else {
+      map[si] = b2.id; map[sj] = a.id;
+    }
+    r.layout[key] = map;
+    ui.sheet = null;
+    render();
+  },
+  clearLayout: function(key){
+    var r = ui.rotResult;
+    if (r && r.layout) delete r.layout[key];
+    ui.sheet = null;
     render();
   },
   cell: function(pid, col){
