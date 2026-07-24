@@ -51,8 +51,10 @@
   .token.guest .disc{border-style:dashed;}
   .token.sel .disc{border:3px solid #FFE24A;}
   .token .nm{margin-top:2px;font-size:10px;font-weight:700;color:#fff;background:rgba(0,0,0,.45);border-radius:4px;padding:1px 5px;max-width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  #benchbar{position:absolute;left:6px;top:6px;bottom:6px;width:58px;background:rgba(0,0,0,.3);border-radius:10px;display:flex;flex-direction:column;align-items:center;gap:7px;padding:8px 0;overflow:auto;z-index:2;}
-  .btok{background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;padding:0;font-family:inherit;}
+  #benchbar{position:absolute;left:6px;top:6px;bottom:6px;width:58px;background:rgba(0,0,0,.3);border-radius:10px;display:flex;flex-direction:column;align-items:center;gap:7px;padding:8px 0;overflow-y:auto;z-index:2;touch-action:pan-y;}
+  .btok{background:none;border:none;cursor:grab;display:flex;flex-direction:column;align-items:center;padding:0;font-family:inherit;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;flex-shrink:0;}
+  .btok.lifted{opacity:.35;}
+  .token.target .disc{border:3px solid #FFE24A;transform:scale(1.15);}
   .btok .disc{width:28px;height:28px;border-radius:50%;border:2px solid rgba(255,255,255,.85);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:9px;}
   .btok.guest .disc{border-style:dashed;}
   .btok .nm{margin-top:1px;font-size:8px;font-weight:700;color:#fff;max-width:52px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -1038,7 +1040,7 @@ function tok(id){
 function bindPitch(){
   var pitch = document.getElementById("pitch");
   if (!pitch) return;
-  var drag = null, ghost = null;
+  var drag = null, ghost = null, lastE = null;
 
   function pct(e){
     var r = pitch.getBoundingClientRect();
@@ -1048,7 +1050,7 @@ function bindPitch(){
     var bb = document.getElementById("benchbar");
     if (!bb) return false;
     var r = bb.getBoundingClientRect();
-    return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    return e.clientX >= r.left - 4 && e.clientX <= r.right + 4 && e.clientY >= r.top && e.clientY <= r.bottom;
   }
   function benchItemAt(e){
     var bb = document.getElementById("benchbar");
@@ -1056,7 +1058,7 @@ function bindPitch(){
     var found = null;
     Array.prototype.forEach.call(bb.querySelectorAll(".btok[data-id]"), function(el){
       var r = el.getBoundingClientRect();
-      if (e.clientY >= r.top - 3 && e.clientY <= r.bottom + 3) found = el.getAttribute("data-id");
+      if (e.clientY >= r.top - 4 && e.clientY <= r.bottom + 4) found = el.getAttribute("data-id");
     });
     return found;
   }
@@ -1067,50 +1069,45 @@ function bindPitch(){
       var d = Math.sqrt(Math.pow(t.x - p.x, 2) + Math.pow((t.y - p.y) * 0.75, 2));
       if (d < bd){ bd = d; best = t; }
     });
-    return bd < 16 ? best : null;
+    return bd < 18 ? best : null;
   }
   function makeGhost(label, color){
     ghost = document.createElement("div");
     ghost.className = "token";
     ghost.style.pointerEvents = "none";
     ghost.style.zIndex = 9;
-    ghost.style.opacity = "0.9";
-    ghost.innerHTML = '<div class="disc" style="background:' + color + '">↔</div><div class="nm">' + esc(label) + '</div>';
+    ghost.innerHTML = '<div class="disc" style="background:' + color + ';box-shadow:0 4px 12px rgba(0,0,0,.5)">↔</div><div class="nm">' + esc(label) + '</div>';
     pitch.appendChild(ghost);
   }
   function highlight(id){
-    document.querySelectorAll(".token").forEach(function(el){
-      if (id && el.getAttribute("data-id") === id) el.classList.add("sel");
-      else el.classList.remove("sel");
+    Array.prototype.forEach.call(pitch.querySelectorAll(".token"), function(el){
+      if (id && el.getAttribute("data-id") === id) el.classList.add("target");
+      else el.classList.remove("target");
     });
   }
+  function cleanup(){
+    if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
+    ghost = null;
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", onUp);
+    document.removeEventListener("pointercancel", onCancel);
+    window.removeEventListener("blur", onCancel);
+  }
 
-  pitch.addEventListener("pointerdown", function(e){
-    var bt = e.target.closest(".btok");
-    if (bt && bt.getAttribute("data-id")){
-      e.preventDefault();
-      try { bt.setPointerCapture(e.pointerId); } catch(err){}
-      drag = { kind: "bench", id: bt.getAttribute("data-id"), el: bt, sx: e.clientX, sy: e.clientY, moved: false };
-      return;
-    }
-    var el = e.target.closest(".token");
-    if (!el) return;
-    e.preventDefault();
-    try { el.setPointerCapture(e.pointerId); } catch(err){}
-    drag = { kind: "field", id: el.getAttribute("data-id"), el: el, sx: e.clientX, sy: e.clientY, moved: false };
-  });
-
-  pitch.addEventListener("pointermove", function(e){
+  function onMove(e){
     if (!drag) return;
+    lastE = { clientX: e.clientX, clientY: e.clientY };
     if (!drag.moved && Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) > 6){
       drag.moved = true;
       if (drag.kind === "bench"){
         var f = findToken(drag.id);
         var m = f && f.t.memberId ? memById(f.t.memberId) : null;
         makeGhost(f ? f.t.name : "", m ? pc(m.pos) : "var(--pitchA)");
+        if (drag.el) drag.el.classList.add("lifted");
       }
     }
     if (!drag.moved) return;
+    e.preventDefault();
     var p = pct(e);
     if (drag.kind === "bench"){
       if (ghost){ ghost.style.left = p.x + "%"; ghost.style.top = p.y + "%"; }
@@ -1124,12 +1121,16 @@ function bindPitch(){
     drag.el.style.left = x + "%";
     drag.el.style.top = y + "%";
     t.x = x; t.y = y;
-  });
+    highlight(inBench(e) ? null : null);
+  }
 
-  function up(e){
-    if (!drag) return;
-    var d = drag; drag = null;
-    if (ghost){ ghost.parentNode && ghost.parentNode.removeChild(ghost); ghost = null; }
+  function finish(e){
+    var d = drag;
+    drag = null;
+    cleanup();
+    if (!d) return;
+    if (d.el) d.el.classList.remove("lifted");
+    highlight(null);
     if (!d.moved){
       ui.sheet = { type: "token", id: d.id };
       renderSheet(); rerenderSel();
@@ -1149,8 +1150,32 @@ function bindPitch(){
     }
     save(); render();
   }
-  pitch.addEventListener("pointerup", up);
-  pitch.addEventListener("pointercancel", up);
+  function onUp(e){ finish(e); }
+  function onCancel(){ finish(lastE); }
+
+  pitch.addEventListener("pointerdown", function(e){
+    if (drag) return;
+    var target = null, kind = null;
+    var bt = e.target.closest ? e.target.closest(".btok") : null;
+    if (bt && bt.getAttribute("data-id")){ target = bt; kind = "bench"; }
+    else {
+      var el = e.target.closest ? e.target.closest(".token") : null;
+      if (el){ target = el; kind = "field"; }
+    }
+    if (!target) return;
+    e.preventDefault();
+    lastE = { clientX: e.clientX, clientY: e.clientY };
+    drag = { kind: kind, id: target.getAttribute("data-id"), el: target, sx: e.clientX, sy: e.clientY, moved: false };
+    document.addEventListener("pointermove", onMove, { passive: false });
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onCancel);
+    window.addEventListener("blur", onCancel);
+  });
+
+  /* iOSがスクロールに横取りするのを防ぐ */
+  pitch.addEventListener("touchmove", function(e){
+    if (drag && drag.moved) e.preventDefault();
+  }, { passive: false });
 }
 function rerenderSel(){
   document.querySelectorAll(".token").forEach(function(el){
