@@ -105,7 +105,16 @@ var FORMATIONS = {
   "4-4-2": [["GK",50,91],["RB",85,72],["CB",62,75],["CB",38,75],["LB",15,72],["RM",85,50],["CM",62,53],["CM",38,53],["LM",15,50],["ST",38,28],["ST",62,28]],
   "4-3-3": [["GK",50,91],["RB",85,72],["CB",62,75],["CB",38,75],["LB",15,72],["CM",30,52],["CDM",50,58],["CM",70,52],["RW",80,28],["ST",50,23],["LW",20,28]],
   "3-5-2": [["GK",50,91],["CB",28,74],["CB",50,77],["CB",72,74],["RWB",90,48],["CM",68,53],["CDM",50,58],["CM",32,53],["LWB",10,48],["ST",38,26],["ST",62,26]],
-  "4-2-3-1": [["GK",50,91],["RB",85,72],["CB",62,75],["CB",38,75],["LB",15,72],["CDM",38,58],["CDM",62,58],["RM",80,40],["CAM",50,43],["LM",20,40],["ST",50,24]]
+  "4-2-3-1": [["GK",50,91],["RB",85,72],["CB",62,75],["CB",38,75],["LB",15,72],["CDM",38,58],["CDM",62,58],["RM",80,40],["CAM",50,43],["LM",20,40],["ST",50,24]],
+  "4-1-4-1": [["GK",50,91],["RB",85,73],["CB",62,76],["CB",38,76],["LB",15,73],["CDM",50,60],["RM",84,45],["CM",62,47],["CM",38,47],["LM",16,45],["ST",50,24]],
+  "4-5-1": [["GK",50,91],["RB",85,73],["CB",62,76],["CB",38,76],["LB",15,73],["RM",86,50],["CM",66,54],["CDM",50,58],["CM",34,54],["LM",14,50],["ST",50,26]],
+  "4-4-1-1": [["GK",50,91],["RB",85,73],["CB",62,76],["CB",38,76],["LB",15,73],["RM",85,52],["CM",62,55],["CM",38,55],["LM",15,52],["CAM",50,36],["ST",50,20]],
+  "3-4-3": [["GK",50,91],["CB",28,75],["CB",50,78],["CB",72,75],["RM",86,52],["CM",62,55],["CM",38,55],["LM",14,52],["RW",78,27],["ST",50,22],["LW",22,27]],
+  "3-4-2-1": [["GK",50,91],["CB",28,75],["CB",50,78],["CB",72,75],["RWB",88,52],["CM",62,56],["CM",38,56],["LWB",12,52],["CAM",66,34],["CAM",34,34],["ST",50,20]],
+  "5-3-2": [["GK",50,91],["RWB",90,66],["CB",70,77],["CB",50,80],["CB",30,77],["LWB",10,66],["CM",68,50],["CDM",50,55],["CM",32,50],["ST",38,26],["ST",62,26]],
+  "5-4-1": [["GK",50,91],["RWB",90,66],["CB",70,77],["CB",50,80],["CB",30,77],["LWB",10,66],["RM",80,48],["CM",60,52],["CM",40,52],["LM",20,48],["ST",50,24]],
+  "4-3-1-2": [["GK",50,91],["RB",85,73],["CB",62,76],["CB",38,76],["LB",15,73],["CM",76,54],["CDM",50,58],["CM",24,54],["CAM",50,38],["ST",36,22],["ST",64,22]],
+  "3-1-4-2": [["GK",50,91],["CB",28,76],["CB",50,79],["CB",72,76],["CDM",50,62],["RM",88,48],["CM",64,50],["CM",36,50],["LM",12,48],["ST",38,24],["ST",62,24]]
 };
 var TIME_PRESETS = [["20分×2本",40,2],["25分×2本",50,2],["30分×2本",60,2],["30分×3本",90,3],["40分×2本",80,2],["45分×2本",90,2]];
 
@@ -138,7 +147,7 @@ var ui = {
   mName: "", mNum: "", mPos: "CM", mSub: [],
   fname: (S.board && S.board.fname) || "4-4-2",
   sheet: null,
-  rot: { attend: [], field: 11, total: 60, seg: 4, gk: "", opts: {}, guests: [] },
+  rot: { attend: [], field: 11, total: 60, seg: 4, gk: "", opts: {}, guests: [], presetIdx: null },
   eventId: null, evForm: null, showEvents: false,
   rotResult: null,
   showOpts: false, showAttend: true, rotView: "table",
@@ -239,23 +248,14 @@ function rBoard(){
   if (S.custom[ui.fname]) h += '<button class="btn dgr sm" onclick="act.delFormation()">削除</button>';
   h += '<button class="btn grn sm" onclick="act.applyFormation()">自動配置</button></div>';
   h += '<div class="row" style="margin-bottom:8px">';
-  h += '<button class="btn sm ' + (b.showBench ? "pri" : "gho") + ' grow" onclick="act.toggleBench()">ベンチ</button>';
-  h += '<button class="btn sm gho grow" onclick="act.addGuest()">＋助っ人</button>';
-  h += '<button class="btn sm ' + (b.showEnemy ? "pri" : "gho") + ' grow" onclick="act.toggleEnemy()">相手を表示</button>';
-  h += '<button class="btn sm gho grow" onclick="act.saveFormation()">配置を保存</button></div>';
-  h += '<div class="row" style="margin-bottom:8px"><button class="btn sm pri grow" onclick="act.openEventForm()">📅 この編成を試合として保存</button>';
-  if (S.events.length) h += '<button class="btn sm gho" onclick="ui.showEvents=!ui.showEvents;render()">保存済み ' + S.events.length + '件 ' + (ui.showEvents ? "▲" : "▼") + '</button>';
-  h += '</div>';
-  if (ui.showEvents && S.events.length){
-    h += '<div class="card" style="padding:0;overflow:hidden;margin-bottom:8px">';
-    S.events.forEach(function(ev){
-      h += '<div class="memrow"><div class="grow" style="min-width:0"><div style="font-weight:700;font-size:13px">' + esc(evLabel(ev)) + '</div>';
-      h += '<div class="lbl-s">' + esc(ev.fname || "") + (ev.note ? " ・ " + esc(ev.note) : "") + '</div></div>';
-      h += '<button class="btn sm gho" onclick="act.loadEvent(\'' + ev.id + '\')">読込</button>';
-      h += '<button class="xbtn" onclick="act.delEvent(\'' + ev.id + '\')">×</button></div>';
-    });
-    h += '</div>';
-  }
+  h += '<button class="btn sm ' + (b.showBench ? "pri" : "gho") + '" style="flex:1" onclick="act.toggleBench()">ベンチ</button>';
+  h += '<button class="btn sm ' + (b.showEnemy ? "pri" : "gho") + '" style="flex:1" onclick="act.toggleEnemy()">相手</button>';
+  h += '<button class="btn sm pri" style="flex:1.7" onclick="act.openEventForm()">📅編成を保存</button>';
+  h += '<select class="in" style="flex:2;padding:8px 4px;font-size:12px" onchange="act.loadEvent(this.value)"><option value="">' + (S.events.length ? "保存編成を読込" : "保存済みなし") + '</option>';
+  S.events.forEach(function(ev){
+    h += '<option value="' + ev.id + '">' + esc(evLabel(ev)) + '</option>';
+  });
+  h += '</select></div>';
   h += '<div id="pitch">';
   h += '<svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%"><g stroke="rgba(255,255,255,.85)" stroke-width="2" fill="none"><rect x="8" y="8" width="284" height="384"/><line x1="8" y1="200" x2="292" y2="200"/><circle cx="150" cy="200" r="34"/><rect x="75" y="8" width="150" height="56"/><rect x="75" y="336" width="150" height="56"/><rect x="112" y="8" width="76" height="22"/><rect x="112" y="370" width="76" height="22"/></g></svg>';
   var allyCount = 0;
@@ -276,11 +276,12 @@ function rBoard(){
     (b.bench || []).forEach(function(t){
       var m = t.memberId ? memById(t.memberId) : null;
       var bg = m ? pc(m.pos) : (t.guest ? "var(--pitchA)" : "#6B7480");
-      h += '<button class="btok' + (t.guest ? " guest" : "") + '" onclick="act.openToken(\'' + t.id + '\')">';
+      h += '<button class="btok' + (t.guest ? " guest" : "") + '" data-id="' + t.id + '">';
       h += '<div class="disc" style="background:' + bg + '">' + (m && m.num ? esc(m.num) : (t.guest ? "⚡" : "")) + '</div>';
       h += '<div class="nm">' + esc(t.name) + '</div></button>';
     });
     h += '<button class="btok" onclick="act.addBench()"><div class="disc" style="background:rgba(255,255,255,.25);font-size:14px">＋</div></button>';
+    h += '<div style="color:rgba(255,255,255,.7);font-size:8px;text-align:center;line-height:1.3">ドラッグで<br>入替</div>';
     h += '</div>';
   }
   h += '</div>';
@@ -404,13 +405,13 @@ function rRotation(){
   h += '<div class="lbl-s">試合時間プリセット</div>';
   h += '<div class="row" style="margin-top:4px;margin-bottom:10px"><select class="in grow" onchange="act.preset(this.value)"><option value="">選択してください</option>';
   TIME_PRESETS.concat(S.timePresets).forEach(function(p, i){
-    h += '<option value="' + i + '">' + esc(p[0]) + '</option>';
+    h += '<option value="' + i + '"' + (ui.rot.presetIdx === String(i) ? " selected" : "") + '>' + esc(p[0]) + '</option>';
   });
   h += '</select><button class="btn gho sm" onclick="act.addPreset()">＋追加</button></div>';
   h += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">';
   h += '<label class="lbl-s">同時出場人数<input class="in" type="number" min="1" value="' + ui.rot.field + '" oninput="ui.rot.field=+this.value" style="margin-top:4px"></label>';
-  h += '<label class="lbl-s">試合時間(合計分)<input class="in" type="number" min="1" id="rot-total" value="' + ui.rot.total + '" oninput="ui.rot.total=+this.value" style="margin-top:4px"></label>';
-  h += '<label class="lbl-s">交代枠(分割数)<input class="in" type="number" min="1" id="rot-seg" value="' + ui.rot.seg + '" oninput="ui.rot.seg=+this.value" style="margin-top:4px"></label>';
+  h += '<label class="lbl-s">試合時間(合計分)<input class="in" type="number" min="1" id="rot-total" value="' + ui.rot.total + '" oninput="ui.rot.total=+this.value;ui.rot.presetIdx=null" style="margin-top:4px"></label>';
+  h += '<label class="lbl-s">交代枠(分割数)<input class="in" type="number" min="1" id="rot-seg" value="' + ui.rot.seg + '" oninput="ui.rot.seg=+this.value;ui.rot.presetIdx=null" style="margin-top:4px"></label>';
   h += '</div><label class="lbl-s" style="display:block;margin-top:10px">固定GK（フル出場・任意）<select class="in" style="margin-top:4px" onchange="ui.rot.gk=this.value"><option value="">なし（GKも交代）</option>';
   roster().forEach(function(m){
     if (ui.rot.attend.indexOf(m.id) < 0) return;
@@ -758,6 +759,26 @@ var act = {
     save(); render();
   },
   openToken: function(id){ ui.sheet = { type: "token", id: id }; render(); },
+  swapBenchField: function(benchId, tokenId){
+    var fb = findToken(benchId), ft = findToken(tokenId);
+    if (!fb || !ft){ render(); return; }
+    var a = fb.t, c = ft.t;
+    var tmp = { memberId: a.memberId, name: a.name, guest: a.guest };
+    a.memberId = c.memberId; a.guest = c.guest;
+    a.name = (c.memberId || c.guest) ? c.name : "控え";
+    c.memberId = tmp.memberId; c.guest = tmp.guest;
+    c.name = (tmp.memberId || tmp.guest) ? tmp.name : "未定";
+    save(); render();
+  },
+  fieldToBench: function(tokenId){
+    var f = findToken(tokenId);
+    if (!f || f.bench){ render(); return; }
+    var t = f.t;
+    if (!t.memberId && !t.guest){ render(); return; }
+    board().bench.push({ id: uid(), memberId: t.memberId, name: t.name, guest: t.guest });
+    t.memberId = null; t.name = "未定"; t.guest = false;
+    save(); render();
+  },
   tokenPos: function(p){
     var f = findToken(ui.sheet.id);
     if (f){ f.t.pos = p; save(); render(); }
@@ -838,10 +859,11 @@ var act = {
     alert("「" + evLabel(ev) + "」を保存しました");
   },
   loadEvent: function(id){
+    if (!id) return;
     var ev = null;
     S.events.forEach(function(x){ if (x.id === id) ev = x; });
-    if (!ev) return;
-    if (!confirm("「" + evLabel(ev) + "」の編成をボードに読み込みます。現在の配置は上書きされます。")) return;
+    if (!ev){ render(); return; }
+    if (!confirm("「" + evLabel(ev) + "」の編成をボードに読み込みます。現在の配置は上書きされます。")){ render(); return; }
     S.board = {
       fname: ev.fname, tokens: JSON.parse(JSON.stringify(ev.tokens)),
       bench: JSON.parse(JSON.stringify(ev.bench)),
@@ -929,9 +951,13 @@ var act = {
     var all = TIME_PRESETS.concat(S.timePresets);
     var p = all[+v];
     if (!p) return;
+    ui.rot.presetIdx = String(v);
     ui.rot.total = p[1];
-    ui.rot.seg = (p[1] % 15 === 0) ? p[1] / 15 : p[2]; /* 15分刻み優先 */
-    render();
+    ui.rot.seg = (p[1] % 15 === 0) ? p[1] / 15 : p[2];
+    var ti = document.getElementById("rot-total"), si = document.getElementById("rot-seg");
+    if (ti) ti.value = ui.rot.total;
+    if (si) si.value = ui.rot.seg;
+    setTimeout(render, 80);
   },
   seg15: function(){
     if (ui.rot.total % 15 !== 0) return;
@@ -1012,31 +1038,116 @@ function tok(id){
 function bindPitch(){
   var pitch = document.getElementById("pitch");
   if (!pitch) return;
-  var drag = null;
+  var drag = null, ghost = null;
+
+  function pct(e){
+    var r = pitch.getBoundingClientRect();
+    return { x: (e.clientX - r.left) / r.width * 100, y: (e.clientY - r.top) / r.height * 100 };
+  }
+  function inBench(e){
+    var bb = document.getElementById("benchbar");
+    if (!bb) return false;
+    var r = bb.getBoundingClientRect();
+    return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+  }
+  function benchItemAt(e){
+    var bb = document.getElementById("benchbar");
+    if (!bb) return null;
+    var found = null;
+    Array.prototype.forEach.call(bb.querySelectorAll(".btok[data-id]"), function(el){
+      var r = el.getBoundingClientRect();
+      if (e.clientY >= r.top - 3 && e.clientY <= r.bottom + 3) found = el.getAttribute("data-id");
+    });
+    return found;
+  }
+  function nearestToken(p){
+    var b = board(), best = null, bd = 999;
+    b.tokens.forEach(function(t){
+      if (t.side !== "ally") return;
+      var d = Math.sqrt(Math.pow(t.x - p.x, 2) + Math.pow((t.y - p.y) * 0.75, 2));
+      if (d < bd){ bd = d; best = t; }
+    });
+    return bd < 16 ? best : null;
+  }
+  function makeGhost(label, color){
+    ghost = document.createElement("div");
+    ghost.className = "token";
+    ghost.style.pointerEvents = "none";
+    ghost.style.zIndex = 9;
+    ghost.style.opacity = "0.9";
+    ghost.innerHTML = '<div class="disc" style="background:' + color + '">↔</div><div class="nm">' + esc(label) + '</div>';
+    pitch.appendChild(ghost);
+  }
+  function highlight(id){
+    document.querySelectorAll(".token").forEach(function(el){
+      if (id && el.getAttribute("data-id") === id) el.classList.add("sel");
+      else el.classList.remove("sel");
+    });
+  }
+
   pitch.addEventListener("pointerdown", function(e){
+    var bt = e.target.closest(".btok");
+    if (bt && bt.getAttribute("data-id")){
+      e.preventDefault();
+      try { bt.setPointerCapture(e.pointerId); } catch(err){}
+      drag = { kind: "bench", id: bt.getAttribute("data-id"), el: bt, sx: e.clientX, sy: e.clientY, moved: false };
+      return;
+    }
     var el = e.target.closest(".token");
     if (!el) return;
     e.preventDefault();
     try { el.setPointerCapture(e.pointerId); } catch(err){}
-    drag = { id: el.getAttribute("data-id"), el: el, sx: e.clientX, sy: e.clientY, moved: false };
+    drag = { kind: "field", id: el.getAttribute("data-id"), el: el, sx: e.clientX, sy: e.clientY, moved: false };
   });
+
   pitch.addEventListener("pointermove", function(e){
     if (!drag) return;
-    if (Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) > 6) drag.moved = true;
+    if (!drag.moved && Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) > 6){
+      drag.moved = true;
+      if (drag.kind === "bench"){
+        var f = findToken(drag.id);
+        var m = f && f.t.memberId ? memById(f.t.memberId) : null;
+        makeGhost(f ? f.t.name : "", m ? pc(m.pos) : "var(--pitchA)");
+      }
+    }
     if (!drag.moved) return;
-    var r = pitch.getBoundingClientRect();
+    var p = pct(e);
+    if (drag.kind === "bench"){
+      if (ghost){ ghost.style.left = p.x + "%"; ghost.style.top = p.y + "%"; }
+      var tgt = inBench(e) ? null : nearestToken(p);
+      highlight(tgt ? tgt.id : null);
+      return;
+    }
     var t = tok(drag.id);
-    var x = Math.max(2, Math.min(98, (e.clientX - r.left) / r.width * 100));
-    var y = clampTokenY(t, (e.clientY - r.top) / r.height * 100);
+    var x = Math.max(2, Math.min(98, p.x));
+    var y = clampTokenY(t, p.y);
     drag.el.style.left = x + "%";
     drag.el.style.top = y + "%";
     t.x = x; t.y = y;
   });
-  function up(){
+
+  function up(e){
     if (!drag) return;
-    if (drag.moved){ save(); }
-    else { ui.sheet = { type: "token", id: drag.id }; renderSheet(); rerenderSel(); }
-    drag = null;
+    var d = drag; drag = null;
+    if (ghost){ ghost.parentNode && ghost.parentNode.removeChild(ghost); ghost = null; }
+    if (!d.moved){
+      ui.sheet = { type: "token", id: d.id };
+      renderSheet(); rerenderSel();
+      return;
+    }
+    if (d.kind === "bench"){
+      if (e && !inBench(e)){
+        var tgt = nearestToken(pct(e));
+        if (tgt){ act.swapBenchField(d.id, tgt.id); return; }
+      }
+      render(); return;
+    }
+    if (e && inBench(e)){
+      var bid = benchItemAt(e);
+      if (bid){ act.swapBenchField(bid, d.id); return; }
+      act.fieldToBench(d.id); return;
+    }
+    save(); render();
   }
   pitch.addEventListener("pointerup", up);
   pitch.addEventListener("pointercancel", up);
