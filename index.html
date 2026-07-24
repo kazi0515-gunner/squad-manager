@@ -112,14 +112,25 @@ var TIME_PRESETS = [["20分×2本",40,2],["25分×2本",50,2],["30分×2本",60,
 function uid(){ return Math.random().toString(36).slice(2,9); }
 function esc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 function memLabel(m){ return (m.num ? "#" + m.num + " " : "") + m.name; }
-function memById(id){ for (var i = 0; i < S.members.length; i++){ if (S.members[i].id === id) return S.members[i]; } return null; }
+function memById(id){
+  for (var i = 0; i < S.members.length; i++){ if (S.members[i].id === id) return S.members[i]; }
+  var g = ui.rot.guests || [];
+  for (var j = 0; j < g.length; j++){ if (g[j].id === id) return g[j]; }
+  return null;
+}
+function roster(){ return S.members.concat(ui.rot.guests || []); }
+function evLabel(ev){
+  var d = ev.date ? ev.date.replace(/^\d{4}-/, "").replace("-", "/") : "日付未設定";
+  return d + " vs " + (ev.opponent || "未定");
+}
 
 /* ================= state ================= */
-var S = { members: [], board: null, custom: {}, timePresets: [] };
+var S = { members: [], board: null, custom: {}, timePresets: [], events: [] };
 try { var raw = localStorage.getItem(KEY); if (raw){ var d = JSON.parse(raw); for (var k in d) S[k] = d[k]; } } catch(e){}
 if (!S.members) S.members = [];
 if (!S.custom) S.custom = {};
 if (!S.timePresets) S.timePresets = [];
+if (!S.events) S.events = [];
 function save(){ try { localStorage.setItem(KEY, JSON.stringify(S)); } catch(e){} }
 
 var ui = {
@@ -127,7 +138,8 @@ var ui = {
   mName: "", mNum: "", mPos: "CM", mSub: [],
   fname: (S.board && S.board.fname) || "4-4-2",
   sheet: null,
-  rot: { attend: [], field: 11, total: 60, seg: 4, gk: "", opts: {} },
+  rot: { attend: [], field: 11, total: 60, seg: 4, gk: "", opts: {}, guests: [] },
+  eventId: null, evForm: null, showEvents: false,
   rotResult: null,
   showOpts: false, showAttend: true, rotView: "table",
   em: null
@@ -231,6 +243,19 @@ function rBoard(){
   h += '<button class="btn sm gho grow" onclick="act.addGuest()">＋助っ人</button>';
   h += '<button class="btn sm ' + (b.showEnemy ? "pri" : "gho") + ' grow" onclick="act.toggleEnemy()">相手を表示</button>';
   h += '<button class="btn sm gho grow" onclick="act.saveFormation()">配置を保存</button></div>';
+  h += '<div class="row" style="margin-bottom:8px"><button class="btn sm pri grow" onclick="act.openEventForm()">📅 この編成を試合として保存</button>';
+  if (S.events.length) h += '<button class="btn sm gho" onclick="ui.showEvents=!ui.showEvents;render()">保存済み ' + S.events.length + '件 ' + (ui.showEvents ? "▲" : "▼") + '</button>';
+  h += '</div>';
+  if (ui.showEvents && S.events.length){
+    h += '<div class="card" style="padding:0;overflow:hidden;margin-bottom:8px">';
+    S.events.forEach(function(ev){
+      h += '<div class="memrow"><div class="grow" style="min-width:0"><div style="font-weight:700;font-size:13px">' + esc(evLabel(ev)) + '</div>';
+      h += '<div class="lbl-s">' + esc(ev.fname || "") + (ev.note ? " ・ " + esc(ev.note) : "") + '</div></div>';
+      h += '<button class="btn sm gho" onclick="act.loadEvent(\'' + ev.id + '\')">読込</button>';
+      h += '<button class="xbtn" onclick="act.delEvent(\'' + ev.id + '\')">×</button></div>';
+    });
+    h += '</div>';
+  }
   h += '<div id="pitch">';
   h += '<svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%"><g stroke="rgba(255,255,255,.85)" stroke-width="2" fill="none"><rect x="8" y="8" width="284" height="384"/><line x1="8" y1="200" x2="292" y2="200"/><circle cx="150" cy="200" r="34"/><rect x="75" y="8" width="150" height="56"/><rect x="75" y="336" width="150" height="56"/><rect x="112" y="8" width="76" height="22"/><rect x="112" y="370" width="76" height="22"/></g></svg>';
   var allyCount = 0;
@@ -289,15 +314,29 @@ function rRotation(){
   var h = '<div class="sec-en">Fair Play Time</div><div class="sec-ja">均等出場時間ローテーション自動作成</div>';
   var N = ui.rot.attend.length;
 
+  /* 試合(イベント)選択 */
+  h += '<div class="card" style="margin-bottom:10px;padding:12px 14px">';
+  h += '<div class="lbl-s" style="margin-bottom:4px">📅 試合を選択（ボードで保存した編成を読み込みます）</div>';
+  h += '<div class="row"><select class="in grow" onchange="act.pickEvent(this.value)"><option value="">選択しない（手動で参加者を選ぶ）</option>';
+  S.events.forEach(function(ev){
+    h += '<option value="' + ev.id + '"' + (ui.eventId === ev.id ? " selected" : "") + '>' + esc(evLabel(ev)) + '</option>';
+  });
+  h += '</select>';
+  if (ui.eventId) h += '<button class="btn sm grn" onclick="act.saveRotToEvent()">💾 この設定を試合に保存</button>';
+  h += '</div>';
+  if (S.events.length === 0) h += '<div class="lbl-s" style="margin-top:6px">まだ保存された試合がありません。ボードタブの「📅 この編成を試合として保存」から登録できます。</div>';
+  if (ui.rot.guests && ui.rot.guests.length) h += '<div class="lbl-s" style="margin-top:6px">⚡助っ人: ' + ui.rot.guests.map(function(g){ return esc(g.name); }).join("、") + '</div>';
+  h += '</div>';
+
   /* 参加者選択(折りたたみ) */
   h += '<div class="card" style="padding:0;overflow:hidden;margin-bottom:10px">';
   h += '<button class="acc-h" onclick="ui.showAttend=!ui.showAttend;render()"><span class="t">👥 参加者を選択（' + N + '名）</span><span class="mut" style="font-size:12px">' + (ui.showAttend ? "閉じる ▲" : "開く ▼") + '</span></button>';
   if (ui.showAttend){
     h += '<div style="padding:0 14px 12px"><div style="display:flex;flex-wrap:wrap;gap:6px">';
-    if (S.members.length === 0) h += '<span style="font-size:13px" class="mut">先にメンバーを登録してください</span>';
-    S.members.forEach(function(m){
+    if (roster().length === 0) h += '<span style="font-size:13px" class="mut">先にメンバーを登録してください</span>';
+    roster().forEach(function(m){
       var on = ui.rot.attend.indexOf(m.id) >= 0;
-      h += '<button class="chip" style="font-size:13px;font-family:inherit;' + (on ? "border-color:var(--blue);background:var(--blue);color:#fff" : "") + '" onclick="act.rotToggle(\'' + m.id + '\')">' + esc(m.name) + '</button>';
+      h += '<button class="chip" style="font-size:13px;font-family:inherit;' + (on ? "border-color:var(--blue);background:var(--blue);color:#fff" : "") + '" onclick="act.rotToggle(\'' + m.id + '\')">' + (m.guest ? "⚡" : "") + esc(m.name) + '</button>';
     });
     h += '</div></div>';
   }
@@ -339,7 +378,7 @@ function rRotation(){
       var est = estMinutes();
       h += '<div style="padding:0 14px 12px">';
       h += '<div class="lbl-s" style="margin-bottom:2px">優先=約1.4倍 / 控えめ=約0.6倍。右端は設定を加味した目安分数</div>';
-      S.members.forEach(function(m){
+      roster().forEach(function(m){
         if (ui.rot.attend.indexOf(m.id) < 0) return;
         var o = ui.rot.opts[m.id] || {};
         h += '<div class="optrow"><span style="font-weight:700;min-width:60px">' + esc(m.name) + '</span>';
@@ -373,7 +412,7 @@ function rRotation(){
   h += '<label class="lbl-s">試合時間(合計分)<input class="in" type="number" min="1" id="rot-total" value="' + ui.rot.total + '" oninput="ui.rot.total=+this.value" style="margin-top:4px"></label>';
   h += '<label class="lbl-s">交代枠(分割数)<input class="in" type="number" min="1" id="rot-seg" value="' + ui.rot.seg + '" oninput="ui.rot.seg=+this.value" style="margin-top:4px"></label>';
   h += '</div><label class="lbl-s" style="display:block;margin-top:10px">固定GK（フル出場・任意）<select class="in" style="margin-top:4px" onchange="ui.rot.gk=this.value"><option value="">なし（GKも交代）</option>';
-  S.members.forEach(function(m){
+  roster().forEach(function(m){
     if (ui.rot.attend.indexOf(m.id) < 0) return;
     h += '<option value="' + m.id + '"' + (ui.rot.gk === m.id ? " selected" : "") + '>' + esc(m.name) + '</option>';
   });
@@ -386,7 +425,7 @@ function rRotation(){
 }
 function rRotResult(){
   var r = ui.rotResult;
-  var atts = S.members.filter(function(m){ return r.ids.indexOf(m.id) >= 0; });
+  var atts = roster().filter(function(m){ return r.ids.indexOf(m.id) >= 0; });
   /* gridから分数を再計算 */
   var time = {};
   atts.forEach(function(m){ time[m.id] = 0; });
@@ -477,6 +516,16 @@ function renderSheet(){
   var el = document.getElementById("sheet");
   if (!ui.sheet){ el.className = ""; el.innerHTML = ""; return; }
   var h = "";
+  if (ui.sheet.type === "event"){
+    var ef = ui.evForm;
+    h += '<div style="display:flex;align-items:center;margin-bottom:12px"><div style="font-weight:700;font-size:15px" class="grow">' + (ef.id ? "試合情報を編集" : "この編成を試合として保存") + '</div><button class="xbtn" style="font-size:20px" onclick="act.closeSheet()">×</button></div>';
+    h += '<label class="lbl-s">日付<input class="in" type="date" style="margin-top:4px;margin-bottom:10px" value="' + esc(ef.date) + '" oninput="ui.evForm.date=this.value"></label>';
+    h += '<label class="lbl-s">対戦相手<input class="in" style="margin-top:4px;margin-bottom:10px" placeholder="例: 神遊" value="' + esc(ef.opponent) + '" oninput="ui.evForm.opponent=this.value"></label>';
+    h += '<label class="lbl-s">メモ（任意）<input class="in" style="margin-top:4px;margin-bottom:14px" placeholder="例: 練習試合 / 会場" value="' + esc(ef.note) + '" oninput="ui.evForm.note=this.value"></label>';
+    h += '<div class="lbl-s" style="margin-bottom:10px">現在のスタメン配置・ベンチ・助っ人・相手の配置をそのまま保存します</div>';
+    h += '<button class="btn pri" style="width:100%" onclick="act.saveEvent()">保存する</button>';
+    el.innerHTML = h; el.className = "show"; return;
+  }
   if (ui.sheet.type === "member"){
     var m = memById(ui.sheet.id);
     if (!m){ ui.sheet = null; el.className = ""; return; }
@@ -755,6 +804,114 @@ var act = {
     save(); render();
   },
 
+  /* events */
+  openEventForm: function(){
+    var b = board();
+    if (!b.tokens.some(function(t){ return t.side === "ally"; })){
+      alert("先にボードで選手を配置してください。");
+      return;
+    }
+    var today = new Date();
+    var d = today.getFullYear() + "-" + ("0" + (today.getMonth() + 1)).slice(-2) + "-" + ("0" + today.getDate()).slice(-2);
+    ui.evForm = { id: null, date: d, opponent: "", note: "" };
+    ui.sheet = { type: "event" };
+    renderSheet();
+  },
+  saveEvent: function(){
+    var ef = ui.evForm, b = board();
+    var ev = {
+      id: ef.id || uid(),
+      date: ef.date, opponent: (ef.opponent || "").trim(), note: (ef.note || "").trim(),
+      fname: b.fname,
+      tokens: JSON.parse(JSON.stringify(b.tokens)),
+      bench: JSON.parse(JSON.stringify(b.bench)),
+      showEnemy: b.showEnemy, showBench: b.showBench,
+      rot: null
+    };
+    if (ef.id){
+      S.events = S.events.map(function(x){ return x.id === ef.id ? ev : x; });
+    } else {
+      S.events.unshift(ev);
+    }
+    ui.sheet = null; ui.showEvents = true;
+    save(); render();
+    alert("「" + evLabel(ev) + "」を保存しました");
+  },
+  loadEvent: function(id){
+    var ev = null;
+    S.events.forEach(function(x){ if (x.id === id) ev = x; });
+    if (!ev) return;
+    if (!confirm("「" + evLabel(ev) + "」の編成をボードに読み込みます。現在の配置は上書きされます。")) return;
+    S.board = {
+      fname: ev.fname, tokens: JSON.parse(JSON.stringify(ev.tokens)),
+      bench: JSON.parse(JSON.stringify(ev.bench)),
+      showEnemy: ev.showEnemy, showBench: ev.showBench
+    };
+    ui.fname = ev.fname;
+    ui.sheet = null;
+    save(); render();
+  },
+  delEvent: function(id){
+    var ev = null;
+    S.events.forEach(function(x){ if (x.id === id) ev = x; });
+    if (!ev) return;
+    if (!confirm("「" + evLabel(ev) + "」を削除しますか？")) return;
+    S.events = S.events.filter(function(x){ return x.id !== id; });
+    if (ui.eventId === id){ ui.eventId = null; ui.rot.guests = []; }
+    save(); render();
+  },
+  pickEvent: function(id){
+    if (!id){
+      ui.eventId = null; ui.rot.guests = []; ui.rot.attend = []; ui.rotResult = null;
+      render(); return;
+    }
+    var ev = null;
+    S.events.forEach(function(x){ if (x.id === id) ev = x; });
+    if (!ev) return;
+    ui.eventId = id;
+    /* 参加者 = スタメン + ベンチ（助っ人含む） */
+    var attend = [], guests = [];
+    var all = (ev.tokens || []).filter(function(t){ return t.side === "ally"; }).concat(ev.bench || []);
+    all.forEach(function(t){
+      if (t.memberId && memById(t.memberId)){
+        if (attend.indexOf(t.memberId) < 0) attend.push(t.memberId);
+      } else if (t.guest && t.name){
+        var gid = "g_" + ev.id + "_" + t.id;
+        guests.push({ id: gid, name: t.name, guest: true, pos: t.pos || "CM", sub: [] });
+        attend.push(gid);
+      }
+    });
+    ui.rot.guests = guests;
+    ui.rot.attend = attend;
+    if (ev.rot){
+      ui.rot.field = ev.rot.field; ui.rot.total = ev.rot.total; ui.rot.seg = ev.rot.seg;
+      ui.rot.gk = ev.rot.gk || ""; ui.rot.opts = JSON.parse(JSON.stringify(ev.rot.opts || {}));
+      if (ev.rot.attend && ev.rot.attend.length) ui.rot.attend = ev.rot.attend.slice();
+      ui.rotResult = ev.rot.result ? JSON.parse(JSON.stringify(ev.rot.result)) : null;
+    } else {
+      ui.rot.opts = {}; ui.rot.gk = ""; ui.rotResult = null;
+      var onField = (ev.tokens || []).filter(function(t){ return t.side === "ally"; }).length;
+      if (onField) ui.rot.field = onField;
+    }
+    ui.showAttend = false;
+    render();
+  },
+  saveRotToEvent: function(){
+    if (!ui.eventId) return;
+    S.events.forEach(function(ev){
+      if (ev.id !== ui.eventId) return;
+      ev.rot = {
+        field: ui.rot.field, total: ui.rot.total, seg: ui.rot.seg, gk: ui.rot.gk,
+        attend: ui.rot.attend.slice(),
+        opts: JSON.parse(JSON.stringify(ui.rot.opts)),
+        guests: JSON.parse(JSON.stringify(ui.rot.guests || [])),
+        result: ui.rotResult ? JSON.parse(JSON.stringify(ui.rotResult)) : null
+      };
+    });
+    save();
+    alert("出場時間の設定を試合に保存しました");
+  },
+
   /* rotation */
   rotToggle: function(id){
     var i = ui.rot.attend.indexOf(id);
@@ -798,7 +955,7 @@ var act = {
     save(); render();
   },
   runRot: function(){
-    var players = S.members.filter(function(m){ return ui.rot.attend.indexOf(m.id) >= 0; })
+    var players = roster().filter(function(m){ return ui.rot.attend.indexOf(m.id) >= 0; })
       .map(function(m){
         var o = ui.rot.opts[m.id] || {};
         return {
