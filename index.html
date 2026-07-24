@@ -556,6 +556,40 @@ function renderSheet(){
         });
         h += '</div>';
       }
+      /* ===== 交代セクション ===== */
+      var bd = board();
+      if (!isBench){
+        var bl = bd.bench || [];
+        h += '<div class="lbl-s" style="margin-bottom:4px">🔁 ベンチから交代（タップで入れ替え）</div>';
+        h += '<div class="mlist" style="max-height:170px;overflow:auto;border:1px solid var(--pitchA);border-radius:8px;margin-bottom:14px">';
+        if (bl.length === 0){
+          h += '<div style="padding:12px;font-size:12px" class="mut">ベンチに選手がいません。ボードの「ベンチ」を表示して＋から追加できます。</div>';
+        }
+        bl.forEach(function(bt){
+          var bm = bt.memberId ? memById(bt.memberId) : null;
+          h += '<button onclick="act.swapBenchField(\'' + bt.id + '\',\'' + t.id + '\')">';
+          if (bm) h += '<span class="badge" style="background:' + pc(bm.pos) + '">' + bm.pos + '</span>';
+          else h += '<span class="badge" style="background:#6B7480">' + (bt.guest ? "助" : "空") + '</span>';
+          h += '<span class="grow" style="font-weight:700;font-size:13px">' + (bt.guest ? "⚡" : "") + esc(bm ? memLabel(bm) : bt.name) + '</span>';
+          h += '<span style="font-size:13px;color:var(--pitchA);font-weight:800">交代 ↔</span></button>';
+        });
+        h += '</div>';
+      } else {
+        var fl = (bd.tokens || []).filter(function(x){ return x.side === "ally"; });
+        h += '<div class="lbl-s" style="margin-bottom:4px">🔁 ピッチの選手と交代（タップで入れ替え）</div>';
+        h += '<div class="mlist" style="max-height:170px;overflow:auto;border:1px solid var(--pitchA);border-radius:8px;margin-bottom:14px">';
+        if (fl.length === 0){
+          h += '<div style="padding:12px;font-size:12px" class="mut">ピッチに選手が配置されていません。</div>';
+        }
+        fl.forEach(function(ft){
+          var fm = ft.memberId ? memById(ft.memberId) : null;
+          h += '<button onclick="act.swapBenchField(\'' + t.id + '\',\'' + ft.id + '\')">';
+          h += '<span class="badge" style="background:' + pc(ft.pos) + '">' + ft.pos + '</span>';
+          h += '<span class="grow" style="font-weight:700;font-size:13px">' + (ft.guest ? "⚡" : "") + esc(fm ? memLabel(fm) : ft.name) + '</span>';
+          h += '<span style="font-size:13px;color:var(--pitchA);font-weight:800">交代 ↔</span></button>';
+        });
+        h += '</div>';
+      }
       h += '<div class="lbl-s" style="margin-bottom:4px">登録メンバーから選ぶ</div>';
       h += '<div class="mlist" style="max-height:170px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-bottom:12px">';
       if (S.members.length === 0) h += '<div style="padding:12px;font-size:12px" class="mut">メンバー未登録です</div>';
