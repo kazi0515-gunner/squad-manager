@@ -415,10 +415,15 @@ function rRotation(){
         var o = ui.rot.opts[m.id] || {};
         var gkArr = gkIds();
         var isGk = gkArr.indexOf(m.id) >= 0;
+        var canGk = m.pos === "GK" || isGk; /* GKポジション or 既にGK枠に居る */
         h += '<div class="optrow"><span style="font-weight:700;min-width:56px">' + (isGk ? "🧤" : "") + esc(m.name) + '</span>';
         if (isGk){
-          h += '<span class="lbl-s" style="flex:1">GK枠' + (gkArr.length > 1 ? "（" + gkArr.length + "人で交代・各" + fixedMin(m.id) + "分）" : "・フル出場") + '</span>';
+          h += '<button class="chip" style="border-color:var(--gk);background:var(--gk);color:#fff;padding:4px 10px" onclick="act.gkToggle(\'' + m.id + '\')">GK枠 ✓</button>';
+          h += '<span class="lbl-s" style="flex:1">' + (gkArr.length > 1 ? gkArr.length + "人交代・各" + fixedMin(m.id) + "分" : "フル出場") + '</span>';
         } else {
+          if (canGk){
+            h += '<button class="chip" style="border-color:var(--gk);color:var(--gk);padding:4px 10px" onclick="act.gkToggle(\'' + m.id + '\')">GK枠</button>';
+          }
           h += '<select onchange="act.optT(\'' + m.id + '\',this.value)"><option value="">自動</option>';
           [90,75,60,45,30,15].forEach(function(v){
             if (v > ui.rot.total) return;
@@ -439,7 +444,7 @@ function rRotation(){
         h += '<span style="font-weight:800;margin-left:auto;color:var(--blue)">' + (est[m.id] || 0) + '</span>';
         h += '</div>';
       });
-      h += '<div class="lbl-s" style="margin-top:6px">目標分＝時間を確保 / 自動＝残りを標準·優先·控えめの比で配分 / 枠＝遅刻の合流</div>';
+      h += '<div class="lbl-s" style="margin-top:6px">GK枠＝そのGK同士で交代し合計フル1人分 / 目標分＝時間を確保 / 自動＝残りを比率配分 / 枠＝遅刻合流</div>';
       h += '</div>';
     }
     h += '</div>';
@@ -457,19 +462,7 @@ function rRotation(){
   h += '<label class="lbl-s">同時出場人数<input class="in" type="number" min="1" value="' + ui.rot.field + '" oninput="ui.rot.field=+this.value" style="margin-top:4px"></label>';
   h += '<label class="lbl-s">試合時間(合計分)<input class="in" type="number" min="1" id="rot-total" value="' + ui.rot.total + '" oninput="ui.rot.total=+this.value;ui.rot.presetIdx=null" style="margin-top:4px"></label>';
   h += '<label class="lbl-s">交代枠(分割数)<input class="in" type="number" min="1" id="rot-seg" value="' + ui.rot.seg + '" oninput="ui.rot.seg=+this.value;ui.rot.presetIdx=null" style="margin-top:4px"></label>';
-  h += '</div><div class="lbl-s" style="margin-top:10px">🧤 GK枠（選んだ選手でGKを交代。合計でフル1人分）</div>';
-  h += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px">';
-  var partIds = ui.rot.attend.slice();
-  roster().forEach(function(m){
-    if (partIds.indexOf(m.id) < 0) return;
-    var on = gkIds().indexOf(m.id) >= 0;
-    var isGkPos = m.pos === "GK";
-    h += '<button class="chip" style="' + (on ? "border-color:var(--gk);background:var(--gk);color:#fff" : (isGkPos ? "border-color:var(--gk);color:var(--gk)" : "")) + '" onclick="act.gkToggle(\'' + m.id + '\')">' + (on ? "🧤 " : "") + esc(m.name) + '</button>';
-  });
   h += '</div>';
-  var gkN = gkIds().length;
-  if (gkN >= 2) h += '<div class="lbl-s" style="margin-top:5px;color:var(--gk)">' + gkN + '名で交代 → 各約' + Math.round(ui.rot.total / gkN / 15) * 15 + '分ずつGK</div>';
-  else if (gkN === 0) h += '<div class="lbl-s" style="margin-top:5px">GK枠なし（全員フィールド扱いで交代）</div>';
   h += '<button class="btn grn" style="width:100%;margin-top:12px" ' + (N === 0 ? "disabled" : "") + ' onclick="act.runRot()">ローテーション表を作成</button></div>';
 
   /* 結果 */
