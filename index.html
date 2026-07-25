@@ -150,7 +150,7 @@ var ui = {
   mName: "", mNum: "", mPos: "CM", mSub: [],
   fname: (S.board && S.board.fname) || "4-4-2",
   sheet: null,
-  rot: { attend: [], field: 11, total: 60, seg: 4, gk: "", opts: {}, guests: [], presetIdx: null },
+  rot: { attend: [], field: 11, total: 60, seg: 4, gk: "", gks: [], opts: {}, guests: [], presetIdx: null },
   eventId: null, evForm: null, showEvents: false, evEditMode: false,
   rotResult: null,
   showOpts: false, showAttend: true, rotView: "table", showNames: false, shotCols: null,
@@ -292,8 +292,14 @@ function rBoard(){
 }
 
 /* ---------- rotation ---------- */
+function gkIds(){
+  /* GK枠を回す選手。未設定なら参加GKを自動採用 */
+  var list = (ui.rot.gks || []).filter(function(id){ return ui.rot.attend.indexOf(id) >= 0; });
+  return list;
+}
 function fixedMin(id){
-  if (ui.rot.gk === id) return ui.rot.total;
+  var gk = gkIds();
+  if (gk.indexOf(id) >= 0) return Math.round(ui.rot.total / gk.length / 15) * 15; /* GK枠を均等按分 */
   var o = ui.rot.opts[id] || {};
   return o.tmin ? o.tmin : null;
 }
@@ -301,9 +307,11 @@ function estMinutes(){
   var N = ui.rot.attend.length;
   if (!N) return { map: {}, fixed: 0, remain: 0, freeN: 0 };
   var base = ui.rot.field * ui.rot.total;
+  var gk = gkIds();
   var fixedSum = 0, freeIds = [], wsum = 0;
   ui.rot.attend.forEach(function(id){
     var o = ui.rot.opts[id] || {};
+    if (gk.indexOf(id) >= 0){ fixedSum += fixedMin(id); return; }
     var tm = fixedMin(id);
     if (tm != null){ fixedSum += tm; }
     else { freeIds.push(id); wsum += (o.w === "hi" ? 1.4 : o.w === "lo" ? 0.6 : 1); }
@@ -405,10 +413,11 @@ function rRotation(){
       roster().forEach(function(m){
         if (ui.rot.attend.indexOf(m.id) < 0) return;
         var o = ui.rot.opts[m.id] || {};
-        var isGk = ui.rot.gk === m.id;
+        var gkArr = gkIds();
+        var isGk = gkArr.indexOf(m.id) >= 0;
         h += '<div class="optrow"><span style="font-weight:700;min-width:56px">' + (isGk ? "🧤" : "") + esc(m.name) + '</span>';
         if (isGk){
-          h += '<span class="lbl-s" style="flex:1">GK・フル出場</span>';
+          h += '<span class="lbl-s" style="flex:1">GK枠' + (gkArr.length > 1 ? "（" + gkArr.length + "人で交代・各" + fixedMin(m.id) + "分）" : "・フル出場") + '</span>';
         } else {
           h += '<select onchange="act.optT(\'' + m.id + '\',this.value)"><option value="">自動</option>';
           [90,75,60,45,30,15].forEach(function(v){
@@ -448,14 +457,19 @@ function rRotation(){
   h += '<label class="lbl-s">同時出場人数<input class="in" type="number" min="1" value="' + ui.rot.field + '" oninput="ui.rot.field=+this.value" style="margin-top:4px"></label>';
   h += '<label class="lbl-s">試合時間(合計分)<input class="in" type="number" min="1" id="rot-total" value="' + ui.rot.total + '" oninput="ui.rot.total=+this.value;ui.rot.presetIdx=null" style="margin-top:4px"></label>';
   h += '<label class="lbl-s">交代枠(分割数)<input class="in" type="number" min="1" id="rot-seg" value="' + ui.rot.seg + '" oninput="ui.rot.seg=+this.value;ui.rot.presetIdx=null" style="margin-top:4px"></label>';
-  h += '</div><label class="lbl-s" style="display:block;margin-top:10px">固定GK（フル出場・任意）<select class="in" style="margin-top:4px" onchange="ui.rot.gk=this.value"><option value="">なし（GKも交代）</option>';
+  h += '</div><div class="lbl-s" style="margin-top:10px">🧤 GK枠（選んだ選手でGKを交代。合計でフル1人分）</div>';
+  h += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px">';
+  var partIds = ui.rot.attend.slice();
   roster().forEach(function(m){
-    if (ui.rot.attend.indexOf(m.id) < 0) return;
-    h += '<option value="' + m.id + '"' + (ui.rot.gk === m.id ? " selected" : "") + '>' + esc(m.name) + '</option>';
+    if (partIds.indexOf(m.id) < 0) return;
+    var on = gkIds().indexOf(m.id) >= 0;
+    var isGkPos = m.pos === "GK";
+    h += '<button class="chip" style="' + (on ? "border-color:var(--gk);background:var(--gk);color:#fff" : (isGkPos ? "border-color:var(--gk);color:var(--gk)" : "")) + '" onclick="act.gkToggle(\'' + m.id + '\')">' + (on ? "🧤 " : "") + esc(m.name) + '</button>';
   });
-  h += '</select></label>';
-  var gkList = roster().filter(function(m){ return ui.rot.attend.indexOf(m.id) >= 0 && m.pos === "GK"; });
-  if (gkList.length >= 2) h += '<div class="lbl-s" style="margin-top:4px;color:var(--gk)">GKが' + gkList.length + '名。上の欄でフル出場のGKを選べます</div>';
+  h += '</div>';
+  var gkN = gkIds().length;
+  if (gkN >= 2) h += '<div class="lbl-s" style="margin-top:5px;color:var(--gk)">' + gkN + '名で交代 → 各約' + Math.round(ui.rot.total / gkN / 15) * 15 + '分ずつGK</div>';
+  else if (gkN === 0) h += '<div class="lbl-s" style="margin-top:5px">GK枠なし（全員フィールド扱いで交代）</div>';
   h += '<button class="btn grn" style="width:100%;margin-top:12px" ' + (N === 0 ? "disabled" : "") + ' onclick="act.runRot()">ローテーション表を作成</button></div>';
 
   /* 結果 */
@@ -510,7 +524,8 @@ function rRotResult(){
     h += '<th>分</th></tr></thead><tbody>';
     atts.forEach(function(m){
       var o = ui.rot.opts[m.id] || {};
-      var marks = (r.gk === m.id ? "🧤" : "") + (o.tmin ? "🎯" : "") + (o.w === "hi" ? "⭐" : "") + (o.w === "lo" ? "🔅" : "") + ((o.from || 1) > 1 ? "🕒" : "");
+      var isGkP = r.gks && r.gks.indexOf(m.id) >= 0;
+      var marks = (isGkP ? "🧤" : "") + (o.tmin && !isGkP ? "🎯" : "") + (o.w === "hi" && !isGkP ? "⭐" : "") + (o.w === "lo" && !isGkP ? "🔅" : "") + ((o.from || 1) > 1 ? "🕒" : "");
       h += '<tr><td class="nm">' + esc(m.name) + marks + '</td>';
       r.grid.forEach(function(seg, i){
         var inSeg = seg.indexOf(m.id) >= 0;
@@ -542,7 +557,7 @@ function rRotResult(){
       var inIds = prev ? lineup.filter(function(id){ return prev.indexOf(id) < 0; }) : [];
       h += '<div class="card" style="margin-bottom:8px;padding:10px">';
       h += '<div style="font-weight:800;font-size:13px;margin-bottom:6px">第' + (bi + 1) + 'ブロック <span class="mut" style="font-weight:400">' + t0 + '〜' + t1 + '分（' + lineup.length + '人）</span></div>';
-      h += miniPitch(lineup, r.gk, inIds, String(bl.from));
+      h += miniPitch(lineup, curGk(lineup), inIds, String(bl.from));
       if (ui.showNames){
         h += '<div style="margin-top:8px">';
         lineup.forEach(function(id){
@@ -621,6 +636,12 @@ function blockPlacement(key, lineup, gkId){
   var r = ui.rotResult;
   var ov = (r && r.layout) ? r.layout[key] : null;
   return assignLineup(lineup, baseLayout(), gkId, ov);
+}
+function curGk(lineup){
+  var r = ui.rotResult;
+  if (!r || !r.gks) return null;
+  for (var i = 0; i < r.gks.length; i++){ if (lineup.indexOf(r.gks[i]) >= 0) return r.gks[i]; }
+  return null;
 }
 function pitchBody(placed, gkId, inIds, key, clickable){
   var W = 300, H = 350, s = "";
@@ -716,7 +737,8 @@ function summarySVG(){
     var outIds = prev ? prev.filter(function(id){ return lineup.indexOf(id) < 0; }) : [];
     s += '<text x="' + ox + '" y="' + (oy + 15) + '" font-size="13" font-weight="700" fill="#16211B">第' + (bi + 1) + 'ブロック ' + t0 + '〜' + t1 + '分</text>';
     s += '<g transform="translate(' + ox + ',' + (oy + HEAD) + ')">';
-    s += pitchBody(blockPlacement(String(bl.from), lineup, r.gk), r.gk, inIds, String(bl.from), false);
+    var gkThis = curGk(lineup);
+    s += pitchBody(blockPlacement(String(bl.from), lineup, gkThis), gkThis, inIds, String(bl.from), false);
     s += '</g>';
     function nms(ids){ return ids.map(function(id){ var m = memById(id); return m ? m.name : "?"; }).join("、"); }
     if (outIds.length || inIds.length){
@@ -873,36 +895,47 @@ function renderSheet(){
 }
 
 /* ================= rotation algorithm ================= */
-function buildRotation(players, fieldCount, totalMin, segments, gkId){
+function buildRotation(players, fieldCount, totalMin, segments, gkArr){
   var segMin = totalMin / segments;
-  var time = {}, lastOn = {}, P = {};
-  players.forEach(function(p){ time[p.id] = 0; lastOn[p.id] = -99; P[p.id] = p; });
+  var time = {}, lastOn = {}, gkTime = {}, P = {};
+  players.forEach(function(p){ time[p.id] = 0; lastOn[p.id] = -99; gkTime[p.id] = 0; P[p.id] = p; });
+  var gks = (gkArr || []).filter(function(id){ return P[id]; });
   var grid = [];
-  var gk = gkId && P[gkId] ? P[gkId] : null;
+  var gkRR = 0;
   for (var s = 0; s < segments; s++){
-    var gkOn = gk && (gk.from - 1 <= s);
+    var gkOnId = null;
+    if (gks.length){
+      /* GK枠: これまでのGK時間が最小の人を選ぶ(遅刻合流も考慮) */
+      var avail = gks.filter(function(id){ return P[id].from - 1 <= s; });
+      if (!avail.length) avail = gks.slice();
+      avail.sort(function(a, b){ return gkTime[a] - gkTime[b] || (a > b ? 1 : -1); });
+      gkOnId = avail[0];
+      gkTime[gkOnId] += segMin;
+    }
     var pool = players.filter(function(p){
-      if (gk && p.id === gk.id) return false;
+      if (gks.indexOf(p.id) >= 0) return false;
       if (p.from - 1 > s) return false;
       if (p.max && time[p.id] + segMin > p.max + 0.01) return false;
       return true;
     });
-    var need = Math.min(pool.length, fieldCount - (gkOn ? 1 : 0));
+    var need = Math.min(pool.length, fieldCount - (gkOnId ? 1 : 0));
     pool.sort(function(a, b){
       return (time[a.id] / a.w - time[b.id] / b.w) || (lastOn[a.id] - lastOn[b.id]) || (a._r - b._r);
     });
     var on = pool.slice(0, need).map(function(p){ return p.id; });
-    if (gkOn) on.unshift(gk.id);
-    on.forEach(function(id){ time[id] += segMin; lastOn[id] = s; });
+    if (gkOnId){ on.unshift(gkOnId); time[gkOnId] += segMin; lastOn[gkOnId] = s; }
+    on.forEach(function(id){ if (id !== gkOnId){ time[id] += segMin; lastOn[id] = s; } });
     grid.push(on);
   }
-  return { grid: grid, segMin: segMin };
+  return { grid: grid, segMin: segMin, gks: gks };
 }
 
 function autoGk(){
-  if (ui.rot.gk && ui.rot.attend.indexOf(ui.rot.gk) >= 0) return;
-  var gks = ui.rot.attend.filter(function(id){ var m = memById(id); return m && m.pos === "GK"; });
-  ui.rot.gk = gks.length >= 1 ? gks[0] : "";
+  /* 現状のgks から離脱者を除去。空なら参加GKを自動採用 */
+  ui.rot.gks = (ui.rot.gks || []).filter(function(id){ return ui.rot.attend.indexOf(id) >= 0; });
+  if (ui.rot.gks.length === 0){
+    ui.rot.gks = ui.rot.attend.filter(function(id){ var m = memById(id); return m && m.pos === "GK"; });
+  }
 }
 /* ================= actions ================= */
 var act = {
@@ -1244,17 +1277,17 @@ var act = {
     ui.rot.attend = attend;
     if (ev.rot){
       ui.rot.field = ev.rot.field; ui.rot.total = ev.rot.total; ui.rot.seg = ev.rot.seg;
-      ui.rot.gk = ev.rot.gk || ""; ui.rot.opts = JSON.parse(JSON.stringify(ev.rot.opts || {}));
+      ui.rot.gk = ev.rot.gk || ""; ui.rot.gks = (ev.rot.gks || (ev.rot.gk ? [ev.rot.gk] : [])).slice(); ui.rot.opts = JSON.parse(JSON.stringify(ev.rot.opts || {}));
       if (ev.rot.attend && ev.rot.attend.length) ui.rot.attend = ev.rot.attend.slice();
       ui.rotResult = ev.rot.result ? JSON.parse(JSON.stringify(ev.rot.result)) : null;
     } else {
-      ui.rot.opts = {}; ui.rot.gk = ""; ui.rotResult = null;
+      ui.rot.opts = {}; ui.rot.gk = ""; ui.rot.gks = []; ui.rotResult = null;
       var onField = (ev.tokens || []).filter(function(t){ return t.side === "ally"; }).length;
       if (onField) ui.rot.field = onField;
     }
     ui.showAttend = false;
     ui.evEditMode = false;
-    if (!ui.rot.gk) autoGk();
+    autoGk();
     render();
   },
   saveRotToEvent: function(){
@@ -1262,7 +1295,7 @@ var act = {
     S.events.forEach(function(ev){
       if (ev.id !== ui.eventId) return;
       ev.rot = {
-        field: ui.rot.field, total: ui.rot.total, seg: ui.rot.seg, gk: ui.rot.gk,
+        field: ui.rot.field, total: ui.rot.total, seg: ui.rot.seg, gk: ui.rot.gk, gks: (ui.rot.gks || []).slice(),
         attend: ui.rot.attend.slice(),
         opts: JSON.parse(JSON.stringify(ui.rot.opts)),
         guests: JSON.parse(JSON.stringify(ui.rot.guests || [])),
@@ -1281,6 +1314,12 @@ var act = {
       if (ui.rot.gk === id) ui.rot.gk = "";
     } else ui.rot.attend.push(id);
     autoGk();
+    render();
+  },
+  gkToggle: function(id){
+    ui.rot.gks = ui.rot.gks || [];
+    var i = ui.rot.gks.indexOf(id);
+    if (i >= 0) ui.rot.gks.splice(i, 1); else ui.rot.gks.push(id);
     render();
   },
   optT: function(id, v){ var o = (ui.rot.opts[id] = ui.rot.opts[id] || {}); o.tmin = v === "" ? "" : +v; if (o.tmin) o.w = "norm"; render(); },
@@ -1321,6 +1360,7 @@ var act = {
     save(); render();
   },
   runRot: function(){
+    autoGk();
     var players = roster().filter(function(m){ return ui.rot.attend.indexOf(m.id) >= 0; })
       .map(function(m){
         var o = ui.rot.opts[m.id] || {};
@@ -1329,9 +1369,9 @@ var act = {
         return { id: m.id, _r: Math.random(), w: w, from: o.from || 1, max: tm };
       });
     if (!players.length) return;
-    var r = buildRotation(players, ui.rot.field, ui.rot.total, ui.rot.seg, ui.rot.gk || null);
+    var r = buildRotation(players, ui.rot.field, ui.rot.total, ui.rot.seg, gkIds());
     r.ids = players.map(function(p){ return p.id; });
-    r.gk = ui.rot.gk || null;
+    r.gk = null;
     r.sub = [];
     for (var i = 0; i < r.grid.length; i++) r.sub.push(true);
     r.layout = {};
