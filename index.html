@@ -151,7 +151,7 @@ var ui = {
   fname: (S.board && S.board.fname) || "4-4-2",
   sheet: null,
   rot: { attend: [], field: 11, total: 60, seg: 4, gk: "", opts: {}, guests: [], presetIdx: null },
-  eventId: null, evForm: null, showEvents: false,
+  eventId: null, evForm: null, showEvents: false, evEditMode: false,
   rotResult: null,
   showOpts: false, showAttend: true, rotView: "table", showNames: false, shotCols: null,
   em: null
@@ -292,27 +292,35 @@ function rBoard(){
 }
 
 /* ---------- rotation ---------- */
+function fixedMin(id){
+  if (ui.rot.gk === id) return ui.rot.total;
+  var o = ui.rot.opts[id] || {};
+  return o.tmin ? o.tmin : null;
+}
 function estMinutes(){
-  /* 個別設定を加味した目安 */
   var N = ui.rot.attend.length;
-  if (!N) return {};
+  if (!N) return { map: {}, fixed: 0, remain: 0, freeN: 0 };
   var base = ui.rot.field * ui.rot.total;
-  var sumW = 0;
+  var fixedSum = 0, freeIds = [], wsum = 0;
   ui.rot.attend.forEach(function(id){
     var o = ui.rot.opts[id] || {};
-    sumW += o.w === "hi" ? 1.4 : o.w === "lo" ? 0.6 : 1;
+    var tm = fixedMin(id);
+    if (tm != null){ fixedSum += tm; }
+    else { freeIds.push(id); wsum += (o.w === "hi" ? 1.4 : o.w === "lo" ? 0.6 : 1); }
   });
+  var remain = Math.max(0, base - fixedSum);
   var out = {};
   ui.rot.attend.forEach(function(id){
     var o = ui.rot.opts[id] || {};
-    var w = o.w === "hi" ? 1.4 : o.w === "lo" ? 0.6 : 1;
-    var e = base * w / sumW;
+    var tm = fixedMin(id);
+    var e;
+    if (tm != null) e = tm;
+    else { var w = (o.w === "hi" ? 1.4 : o.w === "lo" ? 0.6 : 1); e = wsum ? remain * w / wsum : 0; }
     var avail = ui.rot.total * (ui.rot.seg - ((o.from || 1) - 1)) / ui.rot.seg;
     e = Math.min(e, avail, ui.rot.total);
-    if (o.max) e = Math.min(e, o.max);
-    out[id] = Math.round(e / 15) * 15; /* 15分刻みに丸め */
+    out[id] = Math.round(e / 15) * 15;
   });
-  return out;
+  return { map: out, fixed: fixedSum, remain: remain, freeN: freeIds.length };
 }
 function rRotation(){
   var h = '<div class="sec-en">Fair Play Time</div><div class="sec-ja">均等出場時間ローテーション自動作成</div>';
@@ -326,8 +334,14 @@ function rRotation(){
     h += '<option value="' + ev.id + '"' + (ui.eventId === ev.id ? " selected" : "") + '>' + esc(evLabel(ev)) + '</option>';
   });
   h += '</select>';
-  if (ui.eventId) h += '<button class="btn sm grn" onclick="act.saveRotToEvent()">💾 この設定を試合に保存</button>';
   h += '</div>';
+  if (ui.eventId){
+    h += '<div class="row" style="margin-top:6px">';
+    h += '<button class="btn sm grn grow" onclick="act.saveRotToEvent()">💾 設定を保存</button>';
+    h += '<button class="btn sm gho grow" onclick="act.editEventMembers()">👥 メンバー編集</button>';
+    h += '<button class="btn sm dgr" onclick="act.delEventFromRot()">🗑</button>';
+    h += '</div>';
+  }
   if (S.events.length === 0) h += '<div class="lbl-s" style="margin-top:6px">まだ保存された試合がありません。ボードタブの「📅 この編成を試合として保存」から登録できます。</div>';
   if (ui.rot.guests && ui.rot.guests.length) h += '<div class="lbl-s" style="margin-top:6px">⚡助っ人: ' + ui.rot.guests.map(function(g){ return esc(g.name); }).join("、") + '</div>';
   h += '</div>';
@@ -343,6 +357,10 @@ function rRotation(){
       h += '<button class="chip" style="font-size:13px;font-family:inherit;' + (on ? "border-color:var(--blue);background:var(--blue);color:#fff" : "") + '" onclick="act.rotToggle(\'' + m.id + '\')">' + (m.guest ? "⚡" : "") + esc(m.name) + '</button>';
     });
     h += '</div></div>';
+    if (ui.evEditMode && ui.eventId){
+      h += '<div style="padding:0 14px 12px"><div class="lbl-s" style="margin-bottom:6px;color:var(--pitchA)">✏️ この試合の参加メンバーを編集中。チップで増減し「反映」を押してください</div>';
+      h += '<button class="btn grn" style="width:100%" onclick="act.applyMemberEditToEvent()">この内容で試合を更新</button></div>';
+    }
   }
   h += '</div>';
 
@@ -377,27 +395,42 @@ function rRotation(){
   /* 個別設定 */
   if (N > 0){
     h += '<div class="card" style="padding:0;overflow:hidden;margin-bottom:10px">';
-    h += '<button class="acc-h" onclick="ui.showOpts=!ui.showOpts;render()"><span class="t">⚙️ 個別設定（優先・遅刻・時間制限）</span><span class="mut" style="font-size:12px">' + (ui.showOpts ? "閉じる ▲" : "開く ▼") + '</span></button>';
+    h += '<button class="acc-h" onclick="ui.showOpts=!ui.showOpts;render()"><span class="t">⚙️ 個別設定（時間・優先・遅刻）</span><span class="mut" style="font-size:12px">' + (ui.showOpts ? "閉じる ▲" : "開く ▼") + '</span></button>';
     if (ui.showOpts){
-      var est = estMinutes();
+      var estR = estMinutes(), est = estR.map;
       h += '<div style="padding:0 14px 12px">';
-      h += '<div class="lbl-s" style="margin-bottom:2px">優先=約1.4倍 / 控えめ=約0.6倍。右端は設定を加味した目安分数</div>';
+      h += '<div style="background:#2E7D4F14;border-radius:8px;padding:6px 10px;font-size:12px;margin-bottom:8px">';
+      h += '指定合計 <b>' + estR.fixed + '分</b>（GK/目標指定）／ 残り <b style="color:var(--pitchA)">' + estR.remain + '分</b> を' + estR.freeN + '名で分配';
+      h += '</div>';
       roster().forEach(function(m){
         if (ui.rot.attend.indexOf(m.id) < 0) return;
         var o = ui.rot.opts[m.id] || {};
-        h += '<div class="optrow"><span style="font-weight:700;min-width:60px">' + esc(m.name) + '</span>';
-        h += '<select onchange="act.optW(\'' + m.id + '\',this.value)">';
-        [["norm","通常"],["hi","優先"],["lo","控えめ"]].forEach(function(x){
-          h += '<option value="' + x[0] + '"' + ((o.w || "norm") === x[0] ? " selected" : "") + '>' + x[1] + '</option>';
-        });
-        h += '</select><select onchange="act.optFrom(\'' + m.id + '\',this.value)">';
-        for (var s = 1; s <= ui.rot.seg; s++){
-          h += '<option value="' + s + '"' + ((o.from || 1) === s ? " selected" : "") + '>' + (s === 1 ? "最初から" : s + "枠目〜") + '</option>';
+        var isGk = ui.rot.gk === m.id;
+        h += '<div class="optrow"><span style="font-weight:700;min-width:56px">' + (isGk ? "🧤" : "") + esc(m.name) + '</span>';
+        if (isGk){
+          h += '<span class="lbl-s" style="flex:1">GK・フル出場</span>';
+        } else {
+          h += '<select onchange="act.optT(\'' + m.id + '\',this.value)"><option value="">自動</option>';
+          [90,75,60,45,30,15].forEach(function(v){
+            if (v > ui.rot.total) return;
+            h += '<option value="' + v + '"' + ((o.tmin || "") === v ? " selected" : "") + '>' + v + '分</option>';
+          });
+          h += '</select>';
+          h += '<select onchange="act.optW(\'' + m.id + '\',this.value)"' + (o.tmin ? " disabled style=\'opacity:.4\'" : "") + '>';
+          [["norm","標準"],["hi","優先"],["lo","控えめ"]].forEach(function(x){
+            h += '<option value="' + x[0] + '"' + ((o.w || "norm") === x[0] ? " selected" : "") + '>' + x[1] + '</option>';
+          });
+          h += '</select>';
+          h += '<select onchange="act.optFrom(\'' + m.id + '\',this.value)">';
+          for (var s = 1; s <= ui.rot.seg; s++){
+            h += '<option value="' + s + '"' + ((o.from || 1) === s ? " selected" : "") + '>' + (s === 1 ? "最初〜" : s + "枠〜") + '</option>';
+          }
+          h += '</select>';
         }
-        h += '</select><input type="number" placeholder="上限分" style="width:64px" value="' + (o.max || "") + '" oninput="act.optMax(\'' + m.id + '\',this.value)">';
-        h += '<span style="font-weight:800;margin-left:auto;color:var(--blue)">約' + (est[m.id] || 0) + '分</span>';
+        h += '<span style="font-weight:800;margin-left:auto;color:var(--blue)">' + (est[m.id] || 0) + '</span>';
         h += '</div>';
       });
+      h += '<div class="lbl-s" style="margin-top:6px">目標分＝時間を確保 / 自動＝残りを標準·優先·控えめの比で配分 / 枠＝遅刻の合流</div>';
       h += '</div>';
     }
     h += '</div>';
@@ -421,6 +454,8 @@ function rRotation(){
     h += '<option value="' + m.id + '"' + (ui.rot.gk === m.id ? " selected" : "") + '>' + esc(m.name) + '</option>';
   });
   h += '</select></label>';
+  var gkList = roster().filter(function(m){ return ui.rot.attend.indexOf(m.id) >= 0 && m.pos === "GK"; });
+  if (gkList.length >= 2) h += '<div class="lbl-s" style="margin-top:4px;color:var(--gk)">GKが' + gkList.length + '名。上の欄でフル出場のGKを選べます</div>';
   h += '<button class="btn grn" style="width:100%;margin-top:12px" ' + (N === 0 ? "disabled" : "") + ' onclick="act.runRot()">ローテーション表を作成</button></div>';
 
   /* 結果 */
@@ -475,7 +510,7 @@ function rRotResult(){
     h += '<th>分</th></tr></thead><tbody>';
     atts.forEach(function(m){
       var o = ui.rot.opts[m.id] || {};
-      var marks = (r.gk === m.id ? "🧤" : "") + (o.w === "hi" ? "⭐" : "") + (o.w === "lo" ? "🔅" : "") + ((o.from || 1) > 1 ? "🕒" : "") + (o.max ? "⚠" : "");
+      var marks = (r.gk === m.id ? "🧤" : "") + (o.tmin ? "🎯" : "") + (o.w === "hi" ? "⭐" : "") + (o.w === "lo" ? "🔅" : "") + ((o.from || 1) > 1 ? "🕒" : "");
       h += '<tr><td class="nm">' + esc(m.name) + marks + '</td>';
       r.grid.forEach(function(seg, i){
         var inSeg = seg.indexOf(m.id) >= 0;
@@ -864,6 +899,11 @@ function buildRotation(players, fieldCount, totalMin, segments, gkId){
   return { grid: grid, segMin: segMin };
 }
 
+function autoGk(){
+  if (ui.rot.gk && ui.rot.attend.indexOf(ui.rot.gk) >= 0) return;
+  var gks = ui.rot.attend.filter(function(id){ var m = memById(id); return m && m.pos === "GK"; });
+  ui.rot.gk = gks.length >= 1 ? gks[0] : "";
+}
 /* ================= actions ================= */
 var act = {
   tab: function(t){ ui.tab = t; ui.sheet = null; render(); },
@@ -1084,6 +1124,45 @@ var act = {
   },
 
   /* events */
+  editEventMembers: function(){
+    if (!ui.eventId) return;
+    ui.showAttend = true;
+    ui.evEditMode = true;
+    render();
+    setTimeout(function(){ window.scrollTo({ top: 0, behavior: "smooth" }); }, 50);
+  },
+  delEventFromRot: function(){
+    if (!ui.eventId) return;
+    act.delEvent(ui.eventId);
+  },
+  applyMemberEditToEvent: function(){
+    var ev = null;
+    S.events.forEach(function(x){ if (x.id === ui.eventId) ev = x; });
+    if (!ev) return;
+    var curIds = ui.rot.attend.slice();
+    var kept = {};
+    (ev.tokens || []).forEach(function(t){
+      if (t.side !== "ally") return;
+      if (t.memberId && curIds.indexOf(t.memberId) < 0){ t.memberId = null; t.name = "未定"; }
+      else if (t.memberId){ kept[t.memberId] = true; }
+    });
+    ev.bench = (ev.bench || []).filter(function(t){
+      if (t.memberId && curIds.indexOf(t.memberId) < 0) return false;
+      if (t.memberId) kept[t.memberId] = true;
+      return true;
+    });
+    curIds.forEach(function(id){
+      if (kept[id]) return;
+      if (id.indexOf("g_") === 0) return;
+      var m = memById(id);
+      ev.bench.push({ id: uid(), memberId: id, name: m ? m.name : "?", guest: false });
+    });
+    S.events = S.events.map(function(x){ return x.id === ev.id ? ev : x; });
+    ui.evEditMode = false;
+    save();
+    alert("試合「" + evLabel(ev) + "」のメンバーを更新しました");
+    render();
+  },
   openEventForm: function(){
     var b = board();
     if (!b.tokens.some(function(t){ return t.side === "ally"; })){
@@ -1174,6 +1253,8 @@ var act = {
       if (onField) ui.rot.field = onField;
     }
     ui.showAttend = false;
+    ui.evEditMode = false;
+    if (!ui.rot.gk) autoGk();
     render();
   },
   saveRotToEvent: function(){
@@ -1199,11 +1280,12 @@ var act = {
       ui.rot.attend.splice(i, 1);
       if (ui.rot.gk === id) ui.rot.gk = "";
     } else ui.rot.attend.push(id);
+    autoGk();
     render();
   },
+  optT: function(id, v){ var o = (ui.rot.opts[id] = ui.rot.opts[id] || {}); o.tmin = v === "" ? "" : +v; if (o.tmin) o.w = "norm"; render(); },
   optW: function(id, v){ (ui.rot.opts[id] = ui.rot.opts[id] || {}).w = v; render(); },
   optFrom: function(id, v){ (ui.rot.opts[id] = ui.rot.opts[id] || {}).from = +v; render(); },
-  optMax: function(id, v){ (ui.rot.opts[id] = ui.rot.opts[id] || {}).max = v === "" ? "" : +v; },
   preset: function(v){
     if (v === "") return;
     var all = TIME_PRESETS.concat(S.timePresets);
@@ -1242,12 +1324,9 @@ var act = {
     var players = roster().filter(function(m){ return ui.rot.attend.indexOf(m.id) >= 0; })
       .map(function(m){
         var o = ui.rot.opts[m.id] || {};
-        return {
-          id: m.id, _r: Math.random(),
-          w: o.w === "hi" ? 1.4 : o.w === "lo" ? 0.6 : 1,
-          from: o.from || 1,
-          max: o.max || 0
-        };
+        var tm = o.tmin || 0;
+        var w = tm ? Math.max(0.2, tm / (ui.rot.total || 1)) : (o.w === "hi" ? 1.4 : o.w === "lo" ? 0.6 : 1);
+        return { id: m.id, _r: Math.random(), w: w, from: o.from || 1, max: tm };
       });
     if (!players.length) return;
     var r = buildRotation(players, ui.rot.field, ui.rot.total, ui.rot.seg, ui.rot.gk || null);
