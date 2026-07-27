@@ -90,8 +90,8 @@
 <div id="sheet"></div>
 <nav class="tabs">
   <button id="tb-members" onclick="act.tab('members')"><div class="ico">👥</div><div class="lbl">メンバー</div></button>
-  <button id="tb-board" onclick="act.tab('board')"><div class="ico">📋</div><div class="lbl">ボード</div></button>
   <button id="tb-rotation" onclick="act.tab('rotation')"><div class="ico">⏱</div><div class="lbl">出場時間</div></button>
+  <button id="tb-board" onclick="act.tab('board')"><div class="ico">📋</div><div class="lbl">ボード</div></button>
 </nav>
 
 <script>
@@ -124,6 +124,30 @@ var TIME_PRESETS = [["20分×2本",40,2],["25分×2本",50,2],["30分×2本",60,
 function uid(){ return Math.random().toString(36).slice(2,9); }
 function esc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 function memLabel(m){ return (m.num ? "#" + m.num + " " : "") + m.name; }
+function primaryPositions(m){ return (m.poss && m.poss.length) ? m.poss : (m.pos ? [m.pos] : []); }
+function primaryPos(m){ var p = primaryPositions(m); return p[0] || "CM"; }
+function assignByPriority(slotPosArr, cand){
+  /* slotPosArr: 各枠のポジション文字列 / cand: メンバー配列。①メイン②サブ③メイン同系統④サブ同系統⑤その他 の順で全枠横断的に割当 */
+  var res = new Array(slotPosArr.length), used = {};
+  var tests = [
+    function(m, p){ return primaryPositions(m).indexOf(p) >= 0; },
+    function(m, p){ return (m.sub || []).indexOf(p) >= 0; },
+    function(m, p){ return primaryPositions(m).some(function(pp){ return groupOf(pp) === groupOf(p); }); },
+    function(m, p){ return (m.sub || []).some(function(s){ return groupOf(s) === groupOf(p); }); },
+    function(){ return true; }
+  ];
+  for (var t = 0; t < tests.length; t++){
+    for (var i = 0; i < slotPosArr.length; i++){
+      if (res[i]) continue;
+      for (var j = 0; j < cand.length; j++){
+        var m = cand[j];
+        if (!m || used[m.id]) continue;
+        if (tests[t](m, slotPosArr[i])){ res[i] = m; used[m.id] = true; break; }
+      }
+    }
+  }
+  return { res: res, used: used };
+}
 function memById(id){
   for (var i = 0; i < S.members.length; i++){ if (S.members[i].id === id) return S.members[i]; }
   var g = ui.rot.guests || [];
@@ -140,6 +164,7 @@ function evLabel(ev){
 var S = { members: [], board: null, custom: {}, timePresets: [], events: [] };
 try { var raw = localStorage.getItem(KEY); if (raw){ var d = JSON.parse(raw); for (var k in d) S[k] = d[k]; } } catch(e){}
 if (!S.members) S.members = [];
+S.members.forEach(function(m){ if (!m.poss || !m.poss.length) m.poss = m.pos ? [m.pos] : ["CM"]; if (!m.pos) m.pos = m.poss[0]; });
 if (!S.custom) S.custom = {};
 if (!S.timePresets) S.timePresets = [];
 if (!S.events) S.events = [];
@@ -147,7 +172,7 @@ function save(){ try { localStorage.setItem(KEY, JSON.stringify(S)); } catch(e){
 
 var ui = {
   tab: "members",
-  mName: "", mNum: "", mPos: "CM", mSub: [],
+  mName: "", mNum: "", mPoss: ["CM"], mSub: [], mGuest: false,
   fname: (S.board && S.board.fname) || "4-4-2",
   sheet: null,
   rot: { attend: [], field: 11, total: 60, seg: 4, gk: "", gks: [], opts: {}, guests: [], presetIdx: null },
@@ -185,23 +210,23 @@ function render(){
 }
 
 /* ---------- members ---------- */
-function posChips(cur, handler){
+function posChipsMulti(arr, handler){
   var h = "";
   for (var g in POS_GROUPS){
     h += '<div style="display:flex;gap:5px;align-items:center;margin-bottom:6px;flex-wrap:wrap">';
     h += '<span style="font-size:10px;font-weight:800;width:26px;color:' + GC[g] + '">' + g + '</span>';
     POS_GROUPS[g].forEach(function(p){
-      var on = cur === p;
+      var on = arr.indexOf(p) >= 0;
       h += '<button class="chip" style="' + (on ? "border-color:" + pc(p) + ";background:" + pc(p) + ";color:#fff" : "") + '" onclick="' + handler + '(\'' + p + '\')">' + p + '</button>';
     });
     h += '</div>';
   }
   return h;
 }
-function subChips(mainPos, subs, handler){
+function subChips(mainArr, subs, handler){
   var h = '<div style="display:flex;gap:5px;flex-wrap:wrap">';
   ALL_POS.forEach(function(p){
-    if (p === mainPos) return;
+    if (mainArr.indexOf(p) >= 0) return;
     var on = subs.indexOf(p) >= 0;
     h += '<button class="chip" style="padding:4px 10px;font-size:11px;border-width:1px;border-style:dashed;' + (on ? "border-color:" + pc(p) + ";background:" + pc(p) + "18;color:" + pc(p) : "") + '" onclick="' + handler + '(\'' + p + '\')">' + p + '</button>';
   });
@@ -212,9 +237,10 @@ function rMembers(){
   h += '<div class="card" style="margin-bottom:14px">';
   h += '<div class="row"><input class="in grow" id="mname" placeholder="名前を入力" value="' + esc(ui.mName) + '" oninput="ui.mName=this.value">';
   h += '<input class="in" id="mnum" type="number" placeholder="背番号" style="width:88px" value="' + esc(ui.mNum) + '" oninput="ui.mNum=this.value"></div>';
-  h += '<div class="lbl-s" style="margin:12px 0 4px">メインポジション</div>' + posChips(ui.mPos, "act.mPos");
-  h += '<div class="lbl-s" style="margin:10px 0 4px">サブポジション（複数可）</div>' + subChips(ui.mPos, ui.mSub, "act.mSub");
-  h += '<button class="btn pri" style="width:100%;margin-top:12px" onclick="act.addMember()">メンバーを追加</button></div>';
+  h += '<div class="lbl-s" style="margin:12px 0 4px">メインポジション（複数可）</div>' + posChipsMulti(ui.mPoss, "act.mPos");
+  h += '<div class="lbl-s" style="margin:10px 0 4px">サブポジション（複数可）</div>' + subChips(ui.mPoss, ui.mSub, "act.mSub");
+  h += '<label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;cursor:pointer"><input type="checkbox"' + (ui.mGuest ? " checked" : "") + ' onchange="ui.mGuest=this.checked;render()" style="width:18px;height:18px"> ⚡ 助っ人として登録（よく来る助っ人を保存）</label>';
+  h += '<button class="btn pri" style="width:100%;margin-top:12px" onclick="act.addMember()">' + (ui.mGuest ? "助っ人" : "メンバー") + 'を追加</button></div>';
 
   if (S.members.length === 0){
     h += '<div style="text-align:center;color:var(--muted);font-size:13px;padding:30px">まだメンバーがいません。上から追加してください。</div>';
@@ -224,9 +250,11 @@ function rMembers(){
     S.members.forEach(function(m){
       h += '<div class="memrow" data-id="' + m.id + '">';
       h += '<div class="grow" style="display:flex;align-items:center;gap:10px;min-width:0;cursor:pointer" onclick="act.editMember(\'' + m.id + '\')">';
-      h += '<div class="avatar" style="background:' + pc(m.pos) + '">' + (m.num ? esc(m.num) : esc(m.name.slice(0,1))) + '</div>';
-      h += '<div class="grow" style="min-width:0"><div style="font-weight:700;font-size:14px">' + esc(m.name) + '</div>';
-      h += '<div style="display:flex;gap:4px;margin-top:3px;flex-wrap:wrap"><span class="badge" style="background:' + pc(m.pos) + '">' + m.pos + '</span>';
+      var mp = primaryPositions(m);
+      h += '<div class="avatar" style="background:' + pc(mp[0]) + '">' + (m.num ? esc(m.num) : esc(m.name.slice(0,1))) + '</div>';
+      h += '<div class="grow" style="min-width:0"><div style="font-weight:700;font-size:14px">' + (m.isGuest ? "⚡ " : "") + esc(m.name) + '</div>';
+      h += '<div style="display:flex;gap:4px;margin-top:3px;flex-wrap:wrap">';
+      mp.forEach(function(p){ h += '<span class="badge" style="background:' + pc(p) + '">' + p + '</span>'; });
       (m.sub || []).forEach(function(s){
         h += '<span class="subbadge" style="color:' + pc(s) + ';border-color:' + pc(s) + '">' + s + '</span>';
       });
@@ -241,7 +269,22 @@ function rMembers(){
 /* ---------- board ---------- */
 function rBoard(){
   var b = board();
-  var h = '<div class="sec-en">Tactics Board</div><div class="sec-ja">フォーメーション作成・戦術ボード（11人制）</div>';
+  var h = '<div class="sec-en">Tactics Board</div><div class="sec-ja">編成・入れ替え・ローテーション作成</div>';
+  /* 試合選択（出場時間タブで保存した参加者を反映） */
+  h += '<div class="card" style="margin-bottom:8px;padding:10px 12px">';
+  h += '<div class="row"><select class="in grow" style="padding:8px 10px" onchange="act.loadEvent(this.value)"><option value="">' + (S.events.length ? "📅 試合を選んで参加者を反映" : "保存済みの試合なし") + '</option>';
+  S.events.forEach(function(ev){
+    h += '<option value="' + ev.id + '"' + (ui.eventId === ev.id ? " selected" : "") + '>' + esc(evLabel(ev)) + '</option>';
+  });
+  h += '</select>';
+  h += '<button class="btn sm grn" onclick="act.applyFormation()">配置</button></div>';
+  if (ui.eventId){
+    var ev1 = null; S.events.forEach(function(x){ if (x.id === ui.eventId) ev1 = x; });
+    if (ev1) h += '<div class="lbl-s" style="margin-top:5px">選択中: <b>' + esc(evLabel(ev1)) + '</b>（参加' + ui.rot.attend.length + '名）</div>';
+  } else {
+    h += '<div class="lbl-s" style="margin-top:5px">試合を選ぶと、その参加者で自動配置・ベンチ登録されます</div>';
+  }
+  h += '</div>';
   h += '<div class="row" style="margin-bottom:6px"><select class="in grow" style="padding:8px 10px" onchange="ui.fname=this.value;render()">';
   allFormationNames().forEach(function(k){
     var label = FORMATIONS[k] ? k : k + "（自作）";
@@ -278,7 +321,7 @@ function rBoard(){
     h += '<div id="benchbar"><div style="color:#fff;font-size:9px;font-weight:800;letter-spacing:.1em">BENCH</div>';
     (b.bench || []).forEach(function(t){
       var m = t.memberId ? memById(t.memberId) : null;
-      var bg = m ? pc(m.pos) : (t.guest ? "var(--pitchA)" : "#6B7480");
+      var bg = m ? pc(primaryPos(m)) : (t.guest ? "var(--pitchA)" : "#6B7480");
       h += '<button class="btok' + (t.guest ? " guest" : "") + '" data-id="' + t.id + '">';
       h += '<div class="disc" style="background:' + bg + '">' + (m && m.num ? esc(m.num) : (t.guest ? "⚡" : "")) + '</div>';
       h += '<div class="nm">' + esc(t.name) + '</div></button>';
@@ -288,6 +331,19 @@ function rBoard(){
     h += '</div>';
   }
   h += '</div>';
+
+  /* ===== ローテーション作成 ===== */
+  h += '<div class="card" style="margin-top:12px;padding:12px 14px">';
+  if (ui.rot.attend.length === 0){
+    h += '<div class="lbl-s">⏱ ローテーション表を作るには、上で試合を選ぶか、出場時間タブで参加者を選んでください</div>';
+  } else {
+    h += '<div style="font-weight:700;font-size:14px;margin-bottom:2px">⏱ ローテーション表</div>';
+    h += '<div class="lbl-s" style="margin-bottom:8px">' + ui.rot.total + '分 ／ 参加' + ui.rot.attend.length + '名 ／ ' + ui.rot.seg + '枠</div>';
+    h += '<button class="btn grn" style="width:100%" onclick="act.runRot()">' + (ui.rotResult ? "作り直す" : "ローテーション表を作成") + '</button>';
+  }
+  h += '</div>';
+  if (ui.rotResult) h += '<div style="margin-top:10px">' + rRotResult() + '</div>';
+
   return h;
 }
 
@@ -331,30 +387,27 @@ function estMinutes(){
   return { map: out, fixed: fixedSum, remain: remain, freeN: freeIds.length };
 }
 function rRotation(){
-  var h = '<div class="sec-en">Fair Play Time</div><div class="sec-ja">均等出場時間ローテーション自動作成</div>';
+  var h = '<div class="sec-en">Match Day</div><div class="sec-ja">参加者を選んで試合として保存</div>';
   var N = ui.rot.attend.length;
 
-  /* 試合(イベント)選択 */
+  /* 試合(イベント)選択・新規 */
   h += '<div class="card" style="margin-bottom:10px;padding:12px 14px">';
-  h += '<div class="lbl-s" style="margin-bottom:4px">📅 試合を選択（ボードで保存した編成を読み込みます）</div>';
-  h += '<div class="row"><select class="in grow" onchange="act.pickEvent(this.value)"><option value="">選択しない（手動で参加者を選ぶ）</option>';
+  h += '<div class="lbl-s" style="margin-bottom:4px">📅 試合を選択 / 新規作成</div>';
+  h += '<div class="row"><select class="in grow" onchange="act.pickEvent(this.value)"><option value="">＋ 新しい試合（参加者から作成）</option>';
   S.events.forEach(function(ev){
     h += '<option value="' + ev.id + '"' + (ui.eventId === ev.id ? " selected" : "") + '>' + esc(evLabel(ev)) + '</option>';
   });
   h += '</select>';
+  if (ui.eventId) h += '<button class="btn sm dgr" onclick="act.delEventFromRot()">🗑</button>';
   h += '</div>';
   if (ui.eventId){
-    h += '<div class="row" style="margin-top:6px">';
-    h += '<button class="btn sm grn grow" onclick="act.saveRotToEvent()">💾 設定を保存</button>';
-    h += '<button class="btn sm gho grow" onclick="act.editEventMembers()">👥 メンバー編集</button>';
-    h += '<button class="btn sm dgr" onclick="act.delEventFromRot()">🗑</button>';
-    h += '</div>';
+    var ev0 = null; S.events.forEach(function(x){ if (x.id === ui.eventId) ev0 = x; });
+    if (ev0) h += '<div class="lbl-s" style="margin-top:6px">' + esc(ev0.note ? ev0.note : "") + '</div>';
   }
-  if (S.events.length === 0) h += '<div class="lbl-s" style="margin-top:6px">まだ保存された試合がありません。ボードタブの「📅 この編成を試合として保存」から登録できます。</div>';
   if (ui.rot.guests && ui.rot.guests.length) h += '<div class="lbl-s" style="margin-top:6px">⚡助っ人: ' + ui.rot.guests.map(function(g){ return esc(g.name); }).join("、") + '</div>';
   h += '</div>';
 
-  /* 参加者選択(折りたたみ) */
+  /* 参加者選択 */
   h += '<div class="card" style="padding:0;overflow:hidden;margin-bottom:10px">';
   h += '<button class="acc-h" onclick="ui.showAttend=!ui.showAttend;render()"><span class="t">👥 参加者を選択（' + N + '名）</span><span class="mut" style="font-size:12px">' + (ui.showAttend ? "閉じる ▲" : "開く ▼") + '</span></button>';
   if (ui.showAttend){
@@ -365,14 +418,10 @@ function rRotation(){
       h += '<button class="chip" style="font-size:13px;font-family:inherit;' + (on ? "border-color:var(--blue);background:var(--blue);color:#fff" : "") + '" onclick="act.rotToggle(\'' + m.id + '\')">' + (m.guest ? "⚡" : "") + esc(m.name) + '</button>';
     });
     h += '</div></div>';
-    if (ui.evEditMode && ui.eventId){
-      h += '<div style="padding:0 14px 12px"><div class="lbl-s" style="margin-bottom:6px;color:var(--pitchA)">✏️ この試合の参加メンバーを編集中。チップで増減し「反映」を押してください</div>';
-      h += '<button class="btn grn" style="width:100%" onclick="act.applyMemberEditToEvent()">この内容で試合を更新</button></div>';
-    }
   }
   h += '</div>';
 
-  /* 配分の目安(15分刻み) */
+  /* 配分の目安 */
   if (N > 0){
     var base = ui.rot.field * ui.rot.total;
     h += '<div class="card" style="margin-bottom:10px;background:#1B3C8C0A;border-color:#1B3C8C33">';
@@ -388,13 +437,7 @@ function rRotation(){
       if (nUp > 0) parts.push('<b style="font-size:16px">' + upper + '分×' + nUp + '名</b>');
       if (N - nUp > 0) parts.push('<b style="font-size:16px">' + lower + '分×' + (N - nUp) + '名</b>');
       h += '<div style="font-size:13px;margin-top:4px">参加' + N + '名 → ' + parts.join(' ＋ ') + '</div>';
-      if (lower === 0) h += '<div style="font-size:11px;color:var(--fw);margin-top:2px">⚠ 参加が多く、出場0分の人が出る計算です。時間や枠数を見直してください</div>';
-    }
-    var segMin = ui.rot.total / ui.rot.seg;
-    if (Math.abs(segMin - 15) > 0.01 && ui.rot.total % 15 === 0){
-      h += '<div style="margin-top:8px;display:flex;align-items:center;gap:8px"><span style="font-size:11px" class="mut">現在1枠' + (Math.round(segMin * 10) / 10) + '分</span><button class="btn sm gho" onclick="act.seg15()">1枠15分に揃える</button></div>';
-    } else if (Math.abs(segMin - 15) <= 0.01){
-      h += '<div style="font-size:11px;margin-top:4px" class="mut">✓ 1枠15分（15分刻みで交代）</div>';
+      if (lower === 0) h += '<div style="font-size:11px;color:var(--fw);margin-top:2px">⚠ 参加が多く、出場0分の人が出る計算です</div>';
     }
     if (N < ui.rot.field) h += '<div style="font-size:11px;color:var(--fw);margin-top:4px">⚠ 参加人数がコート人数より少ないです</div>';
     h += '</div>';
@@ -403,7 +446,7 @@ function rRotation(){
   /* 個別設定 */
   if (N > 0){
     h += '<div class="card" style="padding:0;overflow:hidden;margin-bottom:10px">';
-    h += '<button class="acc-h" onclick="ui.showOpts=!ui.showOpts;render()"><span class="t">⚙️ 個別設定（時間・優先・遅刻）</span><span class="mut" style="font-size:12px">' + (ui.showOpts ? "閉じる ▲" : "開く ▼") + '</span></button>';
+    h += '<button class="acc-h" onclick="ui.showOpts=!ui.showOpts;render()"><span class="t">⚙️ 個別設定（時間・優先・遅刻・GK）</span><span class="mut" style="font-size:12px">' + (ui.showOpts ? "閉じる ▲" : "開く ▼") + '</span></button>';
     if (ui.showOpts){
       var estR = estMinutes(), est = estR.map;
       h += '<div style="padding:0 14px 12px">';
@@ -415,7 +458,7 @@ function rRotation(){
         var o = ui.rot.opts[m.id] || {};
         var gkArr = gkIds();
         var isGk = gkArr.indexOf(m.id) >= 0;
-        var canGk = m.pos === "GK" || isGk; /* GKポジション or 既にGK枠に居る */
+        var canGk = (m.pos === "GK" || (m.poss && m.poss.indexOf("GK") >= 0)) || isGk;
         h += '<div class="optrow"><span style="font-weight:700;min-width:56px">' + (isGk ? "🧤" : "") + esc(m.name) + '</span>';
         if (isGk){
           h += '<button class="chip" style="border-color:var(--gk);background:var(--gk);color:#fff;padding:4px 10px" onclick="act.gkToggle(\'' + m.id + '\')">GK枠 ✓</button>';
@@ -425,7 +468,7 @@ function rRotation(){
             h += '<button class="chip" style="border-color:var(--gk);color:var(--gk);padding:4px 10px" onclick="act.gkToggle(\'' + m.id + '\')">GK枠</button>';
           }
           h += '<select onchange="act.optT(\'' + m.id + '\',this.value)"><option value="">自動</option>';
-          [90,75,60,45,30,15].forEach(function(v){
+          [90,80,75,60,45,40,30,20,15].forEach(function(v){
             if (v > ui.rot.total) return;
             h += '<option value="' + v + '"' + ((o.tmin || "") === v ? " selected" : "") + '>' + v + '分</option>';
           });
@@ -444,13 +487,13 @@ function rRotation(){
         h += '<span style="font-weight:800;margin-left:auto;color:var(--blue)">' + (est[m.id] || 0) + '</span>';
         h += '</div>';
       });
-      h += '<div class="lbl-s" style="margin-top:6px">GK枠＝そのGK同士で交代し合計フル1人分 / 目標分＝時間を確保 / 自動＝残りを比率配分 / 枠＝遅刻合流</div>';
+      h += '<div class="lbl-s" style="margin-top:6px">GK枠＝GK同士で交代し合計フル1人分 / 目標分＝時間を確保 / 自動＝残りを比率配分 / 枠＝遅刻合流</div>';
       h += '</div>';
     }
     h += '</div>';
   }
 
-  /* 時間設定 */
+  /* 試合時間 */
   h += '<div class="card" style="margin-bottom:10px">';
   h += '<div class="lbl-s">試合時間プリセット</div>';
   h += '<div class="row" style="margin-top:4px;margin-bottom:10px"><select class="in grow" onchange="act.preset(this.value)"><option value="">選択してください</option>';
@@ -462,11 +505,19 @@ function rRotation(){
   h += '<label class="lbl-s">同時出場人数<input class="in" type="number" min="1" value="' + ui.rot.field + '" oninput="ui.rot.field=+this.value" style="margin-top:4px"></label>';
   h += '<label class="lbl-s">試合時間(合計分)<input class="in" type="number" min="1" id="rot-total" value="' + ui.rot.total + '" oninput="ui.rot.total=+this.value;ui.rot.presetIdx=null" style="margin-top:4px"></label>';
   h += '<label class="lbl-s">交代枠(分割数)<input class="in" type="number" min="1" id="rot-seg" value="' + ui.rot.seg + '" oninput="ui.rot.seg=+this.value;ui.rot.presetIdx=null" style="margin-top:4px"></label>';
-  h += '</div>';
-  h += '<button class="btn grn" style="width:100%;margin-top:12px" ' + (N === 0 ? "disabled" : "") + ' onclick="act.runRot()">ローテーション表を作成</button></div>';
+  h += '</div></div>';
 
-  /* 結果 */
-  if (ui.rotResult) h += rRotResult();
+  /* 保存 */
+  h += '<div class="card" style="margin-bottom:10px">';
+  if (ui.eventId){
+    h += '<button class="btn grn" style="width:100%" onclick="act.saveRotToEvent()">💾 この参加者・設定で試合を更新</button>';
+    h += '<div class="lbl-s" style="text-align:center;margin-top:8px">ボードタブでこの試合を選ぶと編成・ローテーションを作れます</div>';
+  } else {
+    h += '<button class="btn pri" style="width:100%" ' + (N === 0 ? "disabled" : "") + ' onclick="act.newEventFromRot()">📅 この参加者で試合を保存</button>';
+    h += '<div class="lbl-s" style="text-align:center;margin-top:8px">日付・対戦相手を入力して保存します</div>';
+  }
+  h += '</div>';
+
   return h;
 }
 function rRotResult(){
@@ -611,9 +662,9 @@ function assignLineup(lineup, slots, gkId, ov){
   slots.forEach(function(s, i){
     if (result[i] || !rest.length) return;
     var grp = groupOf(s.pos), pick = -1, j, m;
-    for (j = 0; j < rest.length; j++){ m = memById(rest[j]); if (m && m.pos === s.pos){ pick = j; break; } }
+    for (j = 0; j < rest.length; j++){ m = memById(rest[j]); if (m && primaryPositions(m).indexOf(s.pos) >= 0){ pick = j; break; } }
     if (pick < 0) for (j = 0; j < rest.length; j++){ m = memById(rest[j]); if (m && (m.sub || []).indexOf(s.pos) >= 0){ pick = j; break; } }
-    if (pick < 0) for (j = 0; j < rest.length; j++){ m = memById(rest[j]); if (m && groupOf(m.pos) === grp && s.pos !== "GK"){ pick = j; break; } }
+    if (pick < 0) for (j = 0; j < rest.length; j++){ m = memById(rest[j]); if (m && primaryPositions(m).some(function(pp){ return groupOf(pp) === grp; }) && s.pos !== "GK"){ pick = j; break; } }
     if (pick < 0 && s.pos !== "GK") pick = 0;
     if (pick < 0 && rest.length) pick = 0;
     if (pick >= 0) result[i] = take(pick);
@@ -808,8 +859,9 @@ function renderSheet(){
     h += '<div style="display:flex;align-items:center;margin-bottom:12px"><div style="font-weight:700;font-size:15px" class="grow">メンバーを編集</div><button class="xbtn" style="font-size:20px" onclick="act.closeSheet()">×</button></div>';
     h += '<div class="row" style="margin-bottom:10px"><input class="in grow" placeholder="名前" value="' + esc(em.name) + '" oninput="ui.em.name=this.value">';
     h += '<input class="in" type="number" placeholder="背番号" style="width:88px" value="' + esc(em.num) + '" oninput="ui.em.num=this.value"></div>';
-    h += '<div class="lbl-s" style="margin-bottom:4px">メインポジション</div>' + posChips(em.pos, "act.emPos");
-    h += '<div class="lbl-s" style="margin:8px 0 4px">サブポジション</div>' + subChips(em.pos, em.sub, "act.emSub");
+    h += '<div class="lbl-s" style="margin-bottom:4px">メインポジション（複数可）</div>' + posChipsMulti(em.poss, "act.emPos");
+    h += '<div class="lbl-s" style="margin:8px 0 4px">サブポジション</div>' + subChips(em.poss, em.sub, "act.emSub");
+    h += '<label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;cursor:pointer"><input type="checkbox"' + (em.isGuest ? " checked" : "") + ' onchange="ui.em.isGuest=this.checked;renderSheet()" style="width:18px;height:18px"> ⚡ 助っ人</label>';
     h += '<div class="row" style="margin-top:14px"><button class="btn dgr" onclick="act.delMember(\'' + m.id + '\')">削除</button><button class="btn pri grow" onclick="act.saveMember()">保存</button></div>';
   } else {
     var f = findToken(ui.sheet.id);
@@ -840,7 +892,7 @@ function renderSheet(){
         bl.forEach(function(bt){
           var bm = bt.memberId ? memById(bt.memberId) : null;
           h += '<button onclick="act.swapBenchField(\'' + bt.id + '\',\'' + t.id + '\')">';
-          if (bm) h += '<span class="badge" style="background:' + pc(bm.pos) + '">' + bm.pos + '</span>';
+          if (bm) h += '<span class="badge" style="background:' + pc(primaryPos(bm)) + '">' + primaryPos(bm) + '</span>';
           else h += '<span class="badge" style="background:#6B7480">' + (bt.guest ? "助" : "空") + '</span>';
           h += '<span class="grow" style="font-weight:700;font-size:13px">' + (bt.guest ? "⚡" : "") + esc(bm ? memLabel(bm) : bt.name) + '</span>';
           h += '<span style="font-size:13px;color:var(--pitchA);font-weight:800">交代 ↔</span></button>';
@@ -870,7 +922,7 @@ function renderSheet(){
       b.bench.forEach(function(x){ if (x.memberId) benched[x.memberId] = true; });
       S.members.forEach(function(m){
         h += '<button onclick="act.assignMember(\'' + m.id + '\')" style="' + (t.memberId === m.id ? "background:#1B3C8C12" : "") + '">';
-        h += '<span class="badge" style="background:' + pc(m.pos) + '">' + m.pos + '</span><span class="grow" style="font-weight:700;font-size:13px">' + esc(memLabel(m)) + '</span>';
+        h += '<span class="badge" style="background:' + pc(primaryPos(m)) + '">' + primaryPos(m) + '</span><span class="grow" style="font-weight:700;font-size:13px">' + esc(memLabel(m)) + '</span>';
         if (t.memberId === m.id) h += '<span style="font-size:11px;color:var(--blue);font-weight:800">✓</span>';
         else if (assigned[m.id]) h += '<span style="font-size:10px" class="mut">配置中→移動</span>';
         else if (benched[m.id]) h += '<span style="font-size:10px" class="mut">ベンチ→移動</span>';
@@ -927,7 +979,7 @@ function autoGk(){
   /* 現状のgks から離脱者を除去。空なら参加GKを自動採用 */
   ui.rot.gks = (ui.rot.gks || []).filter(function(id){ return ui.rot.attend.indexOf(id) >= 0; });
   if (ui.rot.gks.length === 0){
-    ui.rot.gks = ui.rot.attend.filter(function(id){ var m = memById(id); return m && m.pos === "GK"; });
+    ui.rot.gks = ui.rot.attend.filter(function(id){ var m = memById(id); return m && primaryPositions(m).indexOf("GK") >= 0; });
   }
 }
 /* ================= actions ================= */
@@ -936,31 +988,41 @@ var act = {
   closeSheet: function(){ ui.sheet = null; render(); },
 
   /* members */
-  mPos: function(p){ ui.mPos = p; ui.mSub = ui.mSub.filter(function(x){ return x !== p; }); render(); },
+  mPos: function(p){
+    var i = ui.mPoss.indexOf(p);
+    if (i >= 0){ if (ui.mPoss.length > 1) ui.mPoss.splice(i, 1); }
+    else { ui.mPoss.push(p); ui.mSub = ui.mSub.filter(function(x){ return x !== p; }); }
+    render();
+  },
   mSub: function(p){ var i = ui.mSub.indexOf(p); if (i >= 0) ui.mSub.splice(i, 1); else ui.mSub.push(p); render(); },
   addMember: function(){
     var n = (document.getElementById("mname").value || "").trim();
     if (!n) return;
     var num = (document.getElementById("mnum").value || "").trim();
-    S.members.push({ id: uid(), name: n, num: num, pos: ui.mPos, sub: ui.mSub.slice() });
-    ui.mName = ""; ui.mNum = ""; ui.mSub = [];
+    S.members.push({ id: uid(), name: n, num: num, poss: ui.mPoss.slice(), pos: ui.mPoss[0], sub: ui.mSub.slice(), isGuest: ui.mGuest });
+    ui.mName = ""; ui.mNum = ""; ui.mSub = []; ui.mPoss = ["CM"]; ui.mGuest = false;
     save(); render();
   },
   editMember: function(id){
     var m = memById(id);
     if (!m) return;
-    ui.em = { id: m.id, name: m.name, num: m.num || "", pos: m.pos, sub: (m.sub || []).slice() };
+    ui.em = { id: m.id, name: m.name, num: m.num || "", poss: primaryPositions(m).slice(), sub: (m.sub || []).slice(), isGuest: !!m.isGuest };
     ui.sheet = { type: "member", id: id };
     renderSheet();
   },
-  emPos: function(p){ ui.em.pos = p; ui.em.sub = ui.em.sub.filter(function(x){ return x !== p; }); renderSheet(); },
+  emPos: function(p){
+    var i = ui.em.poss.indexOf(p);
+    if (i >= 0){ if (ui.em.poss.length > 1) ui.em.poss.splice(i, 1); }
+    else { ui.em.poss.push(p); ui.em.sub = ui.em.sub.filter(function(x){ return x !== p; }); }
+    renderSheet();
+  },
   emSub: function(p){ var i = ui.em.sub.indexOf(p); if (i >= 0) ui.em.sub.splice(i, 1); else ui.em.sub.push(p); renderSheet(); },
   saveMember: function(){
     var m = memById(ui.em.id);
     if (!m) return;
     var n = (ui.em.name || "").trim();
     if (!n) return;
-    m.name = n; m.num = String(ui.em.num || "").trim(); m.pos = ui.em.pos; m.sub = ui.em.sub.slice();
+    m.name = n; m.num = String(ui.em.num || "").trim(); m.poss = ui.em.poss.slice(); m.pos = ui.em.poss[0]; m.sub = ui.em.sub.slice(); m.isGuest = !!ui.em.isGuest;
     var b = board();
     b.tokens.concat(b.bench).forEach(function(t){ if (t.memberId === m.id) t.name = m.name; });
     ui.sheet = null;
@@ -991,32 +1053,19 @@ var act = {
   applyFormation: function(){
     var b = board();
     var slots = getSlots(ui.fname);
-    var used = {};
-    function pick(p){
-      var g = groupOf(p);
-      var tests = [
-        function(m){ return m.pos === p; },
-        function(m){ return (m.sub || []).indexOf(p) >= 0; },
-        function(m){ return groupOf(m.pos) === g; },
-        function(m){ return (m.sub || []).some(function(s){ return groupOf(s) === g; }); },
-        function(){ return true; }
-      ];
-      for (var i = 0; i < tests.length; i++){
-        for (var j = 0; j < S.members.length; j++){
-          var m = S.members[j];
-          if (!used[m.id] && tests[i](m)){ used[m.id] = true; return m; }
-        }
-      }
-      return null;
-    }
-    var ally = slots.map(function(sl){
-      var m = pick(sl[0]);
+    /* 参加者がいればその中から、いなければ全員から選ぶ */
+    var cand = ui.rot.attend.length ? ui.rot.attend.map(function(id){ return memById(id); }).filter(Boolean) : S.members;
+    var asg = assignByPriority(slots.map(function(sl){ return sl[0]; }), cand);
+    var used = asg.used;
+    var ally = slots.map(function(sl, i){
+      var m = asg.res[i];
       var y = b.showEnemy ? compress(sl[2]) : sl[2];
-      return { id: uid(), side: "ally", pos: sl[0], x: sl[1], y: y, memberId: m ? m.id : null, name: m ? m.name : "未定", guest: false };
+      var gg = m && m.id && String(m.id).indexOf("g_") === 0;
+      return { id: uid(), side: "ally", pos: sl[0], x: sl[1], y: y, memberId: (m && !gg) ? m.id : null, name: m ? m.name : "未定", guest: !!gg };
     });
     var enemies = b.tokens.filter(function(t){ return t.side === "enemy"; });
     var guestBench = b.bench.filter(function(t){ return t.guest; });
-    var rest = S.members.filter(function(m){ return !used[m.id]; }).map(function(m){
+    var rest = cand.filter(function(m){ return !used[m.id]; }).map(function(m){
       return { id: uid(), memberId: m.id, name: m.name, guest: false };
     });
     b.fname = ui.fname;
@@ -1203,38 +1252,115 @@ var act = {
   },
   saveEvent: function(){
     var ef = ui.evForm, b = board();
-    var ev = {
-      id: ef.id || uid(),
-      date: ef.date, opponent: (ef.opponent || "").trim(), note: (ef.note || "").trim(),
-      fname: b.fname,
-      tokens: JSON.parse(JSON.stringify(b.tokens)),
-      bench: JSON.parse(JSON.stringify(b.bench)),
-      showEnemy: b.showEnemy, showBench: b.showBench,
-      rot: null
+    var rotObj = {
+      field: ui.rot.field, total: ui.rot.total, seg: ui.rot.seg,
+      gk: ui.rot.gk, gks: (ui.rot.gks || []).slice(),
+      attend: ui.rot.attend.slice(),
+      opts: JSON.parse(JSON.stringify(ui.rot.opts || {})),
+      guests: JSON.parse(JSON.stringify(ui.rot.guests || [])),
+      result: ui.rotResult ? JSON.parse(JSON.stringify(ui.rotResult)) : null
     };
-    if (ef.id){
-      S.events = S.events.map(function(x){ return x.id === ef.id ? ev : x; });
-    } else {
+    var ev;
+    if (ef.fromRot){
+      /* 出場時間タブから: 参加者リストのみ保存（編成はボードで作る） */
+      var tokens = [], bench = [];
+      ui.rot.attend.forEach(function(id){
+        var m = memById(id);
+        bench.push({ id: uid(), memberId: id.indexOf("g_") === 0 ? null : id, name: m ? m.name : "?", guest: id.indexOf("g_") === 0 });
+      });
+      ev = {
+        id: uid(), date: ef.date, opponent: (ef.opponent || "").trim(), note: (ef.note || "").trim(),
+        fname: ui.fname, tokens: [], bench: bench, showEnemy: false, showBench: true, rot: rotObj
+      };
       S.events.unshift(ev);
+      ui.eventId = ev.id;
+    } else {
+      ev = {
+        id: ef.id || uid(),
+        date: ef.date, opponent: (ef.opponent || "").trim(), note: (ef.note || "").trim(),
+        fname: b.fname,
+        tokens: JSON.parse(JSON.stringify(b.tokens)),
+        bench: JSON.parse(JSON.stringify(b.bench)),
+        showEnemy: b.showEnemy, showBench: b.showBench,
+        rot: rotObj
+      };
+      if (ef.id){ S.events = S.events.map(function(x){ return x.id === ef.id ? ev : x; }); }
+      else { S.events.unshift(ev); ui.eventId = ev.id; }
     }
-    ui.sheet = null; ui.showEvents = true;
+    ui.sheet = null;
     save(); render();
     alert("「" + evLabel(ev) + "」を保存しました");
   },
   loadEvent: function(id){
-    if (!id) return;
+    if (!id){ render(); return; }
     var ev = null;
     S.events.forEach(function(x){ if (x.id === id) ev = x; });
     if (!ev){ render(); return; }
-    if (!confirm("「" + evLabel(ev) + "」の編成をボードに読み込みます。現在の配置は上書きされます。")){ render(); return; }
-    S.board = {
-      fname: ev.fname, tokens: JSON.parse(JSON.stringify(ev.tokens)),
-      bench: JSON.parse(JSON.stringify(ev.bench)),
-      showEnemy: ev.showEnemy, showBench: ev.showBench
-    };
-    ui.fname = ev.fname;
+    /* 参加者・設定を反映 */
+    act._applyEventToRot(ev);
+    /* 保存済みの編成があればそれを、なければ現状フォーメーションで参加者を自動配置 */
+    if (ev.tokens && ev.tokens.length){
+      S.board = {
+        fname: ev.fname, tokens: JSON.parse(JSON.stringify(ev.tokens)),
+        bench: JSON.parse(JSON.stringify(ev.bench || [])),
+        showEnemy: ev.showEnemy, showBench: ev.showBench
+      };
+      ui.fname = ev.fname;
+    } else {
+      ui.fname = ev.fname || ui.fname;
+      act._autoPlaceFromAttend();
+    }
     ui.sheet = null;
     save(); render();
+  },
+  _applyEventToRot: function(ev){
+    ui.eventId = ev.id;
+    var attend = [], guests = [];
+    var all = (ev.tokens || []).filter(function(t){ return t.side === "ally"; }).concat(ev.bench || []);
+    if (all.length){
+      all.forEach(function(t){
+        if (t.memberId && memById(t.memberId)){ if (attend.indexOf(t.memberId) < 0) attend.push(t.memberId); }
+        else if (t.guest && t.name){
+          var gid = "g_" + ev.id + "_" + t.id;
+          guests.push({ id: gid, name: t.name, guest: true, pos: t.pos || "CM", sub: [] });
+          attend.push(gid);
+        }
+      });
+    }
+    if (ev.rot){
+      ui.rot.field = ev.rot.field; ui.rot.total = ev.rot.total; ui.rot.seg = ev.rot.seg;
+      ui.rot.gk = ev.rot.gk || ""; ui.rot.gks = (ev.rot.gks || (ev.rot.gk ? [ev.rot.gk] : [])).slice();
+      ui.rot.opts = JSON.parse(JSON.stringify(ev.rot.opts || {}));
+      ui.rot.guests = ev.rot.guests ? JSON.parse(JSON.stringify(ev.rot.guests)) : guests;
+      ui.rot.attend = (ev.rot.attend && ev.rot.attend.length) ? ev.rot.attend.slice() : attend;
+      ui.rotResult = ev.rot.result ? JSON.parse(JSON.stringify(ev.rot.result)) : null;
+    } else {
+      ui.rot.guests = guests; ui.rot.attend = attend;
+      ui.rot.opts = {}; ui.rot.gk = ""; ui.rot.gks = []; ui.rotResult = null;
+    }
+    ui.evEditMode = false;
+    autoGk();
+  },
+  _autoPlaceFromAttend: function(){
+    var b = board();
+    var slots = getSlots(ui.fname);
+    var cand = ui.rot.attend.map(function(id){ return memById(id); }).filter(Boolean);
+    var asg = assignByPriority(slots.map(function(sl){ return sl[0]; }), cand);
+    var used = asg.used;
+    var ally = slots.map(function(sl, i){
+      var m = asg.res[i];
+      var gg = m && String(m.id).indexOf("g_") === 0;
+      var y = b.showEnemy ? compress(sl[2]) : sl[2];
+      return { id: uid(), side: "ally", pos: sl[0], x: sl[1], y: y, memberId: (m && !gg) ? m.id : null, name: m ? m.name : "未定", guest: !!gg };
+    });
+    var enemies = b.tokens.filter(function(t){ return t.side === "enemy"; });
+    var rest = cand.filter(function(m){ return !used[m.id]; }).map(function(m){
+      var gg = String(m.id).indexOf("g_") === 0;
+      return { id: uid(), memberId: gg ? null : m.id, name: m.name, guest: gg };
+    });
+    b.fname = ui.fname;
+    b.tokens = ally.concat(enemies);
+    b.bench = rest;
   },
   delEvent: function(id){
     var ev = null;
@@ -1248,43 +1374,28 @@ var act = {
   pickEvent: function(id){
     if (!id){
       ui.eventId = null; ui.rot.guests = []; ui.rot.attend = []; ui.rotResult = null;
+      ui.rot.opts = {}; ui.rot.gks = []; ui.rot.gk = "";
+      ui.showAttend = true;
       render(); return;
     }
     var ev = null;
     S.events.forEach(function(x){ if (x.id === id) ev = x; });
     if (!ev) return;
-    ui.eventId = id;
-    /* 参加者 = スタメン + ベンチ（助っ人含む） */
-    var attend = [], guests = [];
-    var all = (ev.tokens || []).filter(function(t){ return t.side === "ally"; }).concat(ev.bench || []);
-    all.forEach(function(t){
-      if (t.memberId && memById(t.memberId)){
-        if (attend.indexOf(t.memberId) < 0) attend.push(t.memberId);
-      } else if (t.guest && t.name){
-        var gid = "g_" + ev.id + "_" + t.id;
-        guests.push({ id: gid, name: t.name, guest: true, pos: t.pos || "CM", sub: [] });
-        attend.push(gid);
-      }
-    });
-    ui.rot.guests = guests;
-    ui.rot.attend = attend;
-    if (ev.rot){
-      ui.rot.field = ev.rot.field; ui.rot.total = ev.rot.total; ui.rot.seg = ev.rot.seg;
-      ui.rot.gk = ev.rot.gk || ""; ui.rot.gks = (ev.rot.gks || (ev.rot.gk ? [ev.rot.gk] : [])).slice(); ui.rot.opts = JSON.parse(JSON.stringify(ev.rot.opts || {}));
-      if (ev.rot.attend && ev.rot.attend.length) ui.rot.attend = ev.rot.attend.slice();
-      ui.rotResult = ev.rot.result ? JSON.parse(JSON.stringify(ev.rot.result)) : null;
-    } else {
-      ui.rot.opts = {}; ui.rot.gk = ""; ui.rot.gks = []; ui.rotResult = null;
-      var onField = (ev.tokens || []).filter(function(t){ return t.side === "ally"; }).length;
-      if (onField) ui.rot.field = onField;
-    }
-    ui.showAttend = false;
-    ui.evEditMode = false;
-    autoGk();
+    act._applyEventToRot(ev);
+    ui.showAttend = true;
     render();
+  },
+  newEventFromRot: function(){
+    if (ui.rot.attend.length === 0) return;
+    var today = new Date();
+    var d = today.getFullYear() + "-" + ("0" + (today.getMonth() + 1)).slice(-2) + "-" + ("0" + today.getDate()).slice(-2);
+    ui.evForm = { id: null, date: d, opponent: "", note: "", fromRot: true };
+    ui.sheet = { type: "event" };
+    renderSheet();
   },
   saveRotToEvent: function(){
     if (!ui.eventId) return;
+    var b = board();
     S.events.forEach(function(ev){
       if (ev.id !== ui.eventId) return;
       ev.rot = {
@@ -1294,9 +1405,16 @@ var act = {
         guests: JSON.parse(JSON.stringify(ui.rot.guests || [])),
         result: ui.rotResult ? JSON.parse(JSON.stringify(ui.rotResult)) : null
       };
+      /* ボードの編成も一緒に更新（ボードで作業した内容を保持） */
+      if (b.tokens && b.tokens.some(function(t){ return t.side === "ally"; })){
+        ev.fname = b.fname;
+        ev.tokens = JSON.parse(JSON.stringify(b.tokens));
+        ev.bench = JSON.parse(JSON.stringify(b.bench));
+        ev.showEnemy = b.showEnemy; ev.showBench = b.showBench;
+      }
     });
     save();
-    alert("出場時間の設定を試合に保存しました");
+    alert("試合を更新しました");
   },
 
   /* rotation */
@@ -1533,7 +1651,7 @@ function bindPitch(){
       if (drag.kind === "bench"){
         var f = findToken(drag.id);
         var m = f && f.t.memberId ? memById(f.t.memberId) : null;
-        makeGhost(f ? f.t.name : "", m ? pc(m.pos) : "var(--pitchA)");
+        makeGhost(f ? f.t.name : "", m ? pc(primaryPos(m)) : "var(--pitchA)");
         if (drag.el) drag.el.classList.add("lifted");
       }
     }
