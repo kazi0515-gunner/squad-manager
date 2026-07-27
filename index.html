@@ -898,6 +898,20 @@ function renderSheet(){
           h += '<span style="font-size:13px;color:var(--pitchA);font-weight:800">交代 ↔</span></button>';
         });
         h += '</div>';
+        /* フィールド↔フィールド */
+        var others = (bd.tokens || []).filter(function(x){ return x.side === "ally" && x.id !== t.id; });
+        if (others.length){
+          h += '<div class="lbl-s" style="margin-bottom:4px">↔️ ピッチ内で位置を入替</div>';
+          h += '<div class="mlist" style="max-height:150px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-bottom:14px">';
+          others.forEach(function(ot){
+            var om = ot.memberId ? memById(ot.memberId) : null;
+            h += '<button onclick="act.swapAny(\'' + t.id + '\',\'' + ot.id + '\')">';
+            h += '<span class="badge" style="background:' + pc(ot.pos) + '">' + ot.pos + '</span>';
+            h += '<span class="grow" style="font-weight:700;font-size:13px">' + (ot.guest ? "⚡" : "") + esc(om ? memLabel(om) : ot.name) + '</span>';
+            h += '<span style="font-size:13px;color:var(--muted);font-weight:800">↔</span></button>';
+          });
+          h += '</div>';
+        }
       } else {
         var fl = (bd.tokens || []).filter(function(x){ return x.side === "ally"; });
         h += '<div class="lbl-s" style="margin-bottom:4px">🔁 ピッチの選手と交代（タップで入れ替え）</div>';
@@ -913,6 +927,21 @@ function renderSheet(){
           h += '<span style="font-size:13px;color:var(--pitchA);font-weight:800">交代 ↔</span></button>';
         });
         h += '</div>';
+        /* ベンチ↔ベンチ */
+        var otherB = (bd.bench || []).filter(function(x){ return x.id !== t.id; });
+        if (otherB.length){
+          h += '<div class="lbl-s" style="margin-bottom:4px">↔️ ベンチ内で入替</div>';
+          h += '<div class="mlist" style="max-height:150px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-bottom:14px">';
+          otherB.forEach(function(ob){
+            var obm = ob.memberId ? memById(ob.memberId) : null;
+            h += '<button onclick="act.swapAny(\'' + t.id + '\',\'' + ob.id + '\')">';
+            if (obm) h += '<span class="badge" style="background:' + pc(primaryPos(obm)) + '">' + primaryPos(obm) + '</span>';
+            else h += '<span class="badge" style="background:#6B7480">' + (ob.guest ? "助" : "空") + '</span>';
+            h += '<span class="grow" style="font-weight:700;font-size:13px">' + (ob.guest ? "⚡" : "") + esc(obm ? memLabel(obm) : ob.name) + '</span>';
+            h += '<span style="font-size:13px;color:var(--muted);font-weight:800">↔</span></button>';
+          });
+          h += '</div>';
+        }
       }
       h += '<div class="lbl-s" style="margin-bottom:4px">登録メンバーから選ぶ</div>';
       h += '<div class="mlist" style="max-height:170px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-bottom:12px">';
@@ -1132,6 +1161,17 @@ var act = {
     save(); render();
   },
   openToken: function(id){ ui.sheet = { type: "token", id: id }; render(); },
+  swapAny: function(idA, idB){
+    var fa = findToken(idA), fb = findToken(idB);
+    if (!fa || !fb || idA === idB){ render(); return; }
+    var a = fa.t, c = fb.t;
+    var emptyA = fa.bench ? "控え" : "未定";
+    var emptyB = fb.bench ? "控え" : "未定";
+    var tmp = { memberId: a.memberId, name: a.name, guest: a.guest };
+    a.memberId = c.memberId; a.guest = c.guest; a.name = (c.memberId || c.guest) ? c.name : emptyA;
+    c.memberId = tmp.memberId; c.guest = tmp.guest; c.name = (tmp.memberId || tmp.guest) ? tmp.name : emptyB;
+    save(); render();
+  },
   swapBenchField: function(benchId, tokenId){
     var fb = findToken(benchId), ft = findToken(tokenId);
     if (!fb || !ft){ render(); return; }
@@ -1611,14 +1651,15 @@ function bindPitch(){
     });
     return found;
   }
-  function nearestToken(p){
+  function nearestToken(p, excludeId){
     var b = board(), best = null, bd = 999;
     b.tokens.forEach(function(t){
       if (t.side !== "ally") return;
+      if (excludeId && t.id === excludeId) return;
       var d = Math.sqrt(Math.pow(t.x - p.x, 2) + Math.pow((t.y - p.y) * 0.75, 2));
       if (d < bd){ bd = d; best = t; }
     });
-    return bd < 18 ? best : null;
+    return bd < 16 ? best : null;
   }
   function makeGhost(label, color){
     ghost = document.createElement("div");
@@ -1670,7 +1711,8 @@ function bindPitch(){
     drag.el.style.left = x + "%";
     drag.el.style.top = y + "%";
     t.x = x; t.y = y;
-    highlight(inBench(e) ? null : null);
+    var swapTgt = (!inBench(e)) ? nearestToken(p, drag.id) : null;
+    highlight(swapTgt ? swapTgt.id : null);
   }
 
   function finish(e){
@@ -1686,16 +1728,26 @@ function bindPitch(){
       return;
     }
     if (d.kind === "bench"){
-      if (e && !inBench(e)){
+      if (e && inBench(e)){
+        var bid0 = benchItemAt(e);
+        if (bid0 && bid0 !== d.id){ act.swapAny(d.id, bid0); return; } /* ベンチ↔ベンチ */
+        render(); return;
+      }
+      if (e){
         var tgt = nearestToken(pct(e));
-        if (tgt){ act.swapBenchField(d.id, tgt.id); return; }
+        if (tgt){ act.swapBenchField(d.id, tgt.id); return; } /* ベンチ→フィールド */
       }
       render(); return;
     }
+    /* フィールドの駒 */
     if (e && inBench(e)){
       var bid = benchItemAt(e);
-      if (bid){ act.swapBenchField(bid, d.id); return; }
-      act.fieldToBench(d.id); return;
+      if (bid){ act.swapBenchField(bid, d.id); return; } /* フィールド→ベンチ枠 */
+      act.fieldToBench(d.id); return;                    /* フィールド→ベンチ空き */
+    }
+    if (e){
+      var tgt2 = nearestToken(pct(e), d.id);
+      if (tgt2){ act.swapAny(d.id, tgt2.id); return; }    /* フィールド↔フィールド */
     }
     save(); render();
   }
