@@ -1662,7 +1662,7 @@ function bindPitch(){
       var d = Math.sqrt(Math.pow(t.x - p.x, 2) + Math.pow((t.y - p.y) * 0.75, 2));
       if (d < bd){ bd = d; best = t; }
     });
-    return bd < 16 ? best : null;
+    return bd < 7.5 ? best : null;
   }
   function makeGhost(label, color){
     ghost = document.createElement("div");
