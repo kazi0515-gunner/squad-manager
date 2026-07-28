@@ -353,9 +353,16 @@ function gkIds(){
   var list = (ui.rot.gks || []).filter(function(id){ return ui.rot.attend.indexOf(id) >= 0; });
   return list;
 }
+function stepMin(){
+  var t = ui.rot.total;
+  if (t % 15 === 0) return 15;      /* 60,90 など → 15分刻み */
+  if (t % 20 === 0) return 20;      /* 80,40 など → 20分刻み */
+  if (t % 10 === 0) return 10;
+  return 15;
+}
 function fixedMin(id){
   var gk = gkIds();
-  if (gk.indexOf(id) >= 0) return Math.round(ui.rot.total / gk.length / 15) * 15; /* GK枠を均等按分 */
+  if (gk.indexOf(id) >= 0){ var st = stepMin(); return Math.round(ui.rot.total / gk.length / st) * st; } /* GK枠を均等按分 */
   var o = ui.rot.opts[id] || {};
   return o.tmin ? o.tmin : null;
 }
@@ -382,7 +389,7 @@ function estMinutes(){
     else { var w = (o.w === "hi" ? 1.4 : o.w === "lo" ? 0.6 : 1); e = wsum ? remain * w / wsum : 0; }
     var avail = ui.rot.total * (ui.rot.seg - ((o.from || 1) - 1)) / ui.rot.seg;
     e = Math.min(e, avail, ui.rot.total);
-    out[id] = Math.round(e / 15) * 15;
+    var st = stepMin(); out[id] = Math.round(e / st) * st;
   });
   return { map: out, fixed: fixedSum, remain: remain, freeN: freeIds.length };
 }
@@ -424,15 +431,16 @@ function rRotation(){
   /* 配分の目安 */
   if (N > 0){
     var base = ui.rot.field * ui.rot.total;
+    var st = stepMin();
     h += '<div class="card" style="margin-bottom:10px;background:#1B3C8C0A;border-color:#1B3C8C33">';
-    h += '<div style="font-size:13px;line-height:1.6"><b>📐 配分の目安（15分刻み）</b><br>コート' + ui.rot.field + '人 × ' + ui.rot.total + '分 = 延べ' + base + '分</div>';
-    var lower = Math.floor(base / N / 15) * 15;
+    h += '<div style="font-size:13px;line-height:1.6"><b>📐 配分の目安（' + st + '分刻み）</b><br>コート' + ui.rot.field + '人 × ' + ui.rot.total + '分 = 延べ' + base + '分</div>';
+    var lower = Math.floor(base / N / st) * st;
     if (lower >= ui.rot.total){
       h += '<div style="font-size:14px;margin-top:4px"><b>全員フル出場（' + ui.rot.total + '分）できます</b></div>';
     } else {
-      var nUp = Math.round((base - lower * N) / 15);
+      var nUp = Math.round((base - lower * N) / st);
       if (nUp > N) nUp = N;
-      var upper = lower + 15;
+      var upper = lower + st;
       var parts = [];
       if (nUp > 0) parts.push('<b style="font-size:16px">' + upper + '分×' + nUp + '名</b>');
       if (N - nUp > 0) parts.push('<b style="font-size:16px">' + lower + '分×' + (N - nUp) + '名</b>');
