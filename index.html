@@ -943,23 +943,26 @@ function renderSheet(){
           h += '</div>';
         }
       }
-      h += '<div class="lbl-s" style="margin-bottom:4px">登録メンバーから選ぶ</div>';
-      h += '<div class="mlist" style="max-height:170px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-bottom:12px">';
-      if (S.members.length === 0) h += '<div style="padding:12px;font-size:12px" class="mut">メンバー未登録です</div>';
-      var b = board(), assigned = {}, benched = {};
-      b.tokens.forEach(function(x){ if (x.memberId) assigned[x.memberId] = true; });
-      b.bench.forEach(function(x){ if (x.memberId) benched[x.memberId] = true; });
-      S.members.forEach(function(m){
-        h += '<button onclick="act.assignMember(\'' + m.id + '\')" style="' + (t.memberId === m.id ? "background:#1B3C8C12" : "") + '">';
-        h += '<span class="badge" style="background:' + pc(primaryPos(m)) + '">' + primaryPos(m) + '</span><span class="grow" style="font-weight:700;font-size:13px">' + esc(memLabel(m)) + '</span>';
-        if (t.memberId === m.id) h += '<span style="font-size:11px;color:var(--blue);font-weight:800">✓</span>';
-        else if (assigned[m.id]) h += '<span style="font-size:10px" class="mut">配置中→移動</span>';
-        else if (benched[m.id]) h += '<span style="font-size:10px" class="mut">ベンチ→移動</span>';
-        h += '</button>';
-      });
-      h += '</div><div class="lbl-s" style="margin-bottom:4px">または助っ人の名前を入力</div>';
-      h += '<div class="row" style="margin-bottom:12px"><input class="in grow" id="guestname" placeholder="例: 田中（助っ人）"><button class="btn grn" onclick="act.setGuest()">設定</button></div>';
-      h += '<div class="row"><button class="btn gho grow" onclick="act.clearToken()">未定に戻す</button>';
+      var hasPlayer = !!(t.memberId || t.guest);
+      /* 空き枠のときだけメンバー割り当て・助っ人入力を表示 */
+      if (!hasPlayer){
+        h += '<div class="lbl-s" style="margin-bottom:4px">登録メンバーから選ぶ</div>';
+        h += '<div class="mlist" style="max-height:170px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-bottom:12px">';
+        if (S.members.length === 0) h += '<div style="padding:12px;font-size:12px" class="mut">メンバー未登録です</div>';
+        var b = board(), assigned = {}, benched = {};
+        b.tokens.forEach(function(x){ if (x.memberId) assigned[x.memberId] = true; });
+        b.bench.forEach(function(x){ if (x.memberId) benched[x.memberId] = true; });
+        S.members.forEach(function(m){
+          h += '<button onclick="act.assignMember(\'' + m.id + '\')">';
+          h += '<span class="badge" style="background:' + pc(primaryPos(m)) + '">' + primaryPos(m) + '</span><span class="grow" style="font-weight:700;font-size:13px">' + esc(memLabel(m)) + '</span>';
+          if (assigned[m.id]) h += '<span style="font-size:10px" class="mut">配置中→移動</span>';
+          else if (benched[m.id]) h += '<span style="font-size:10px" class="mut">ベンチ→移動</span>';
+          h += '</button>';
+        });
+        h += '</div><div class="lbl-s" style="margin-bottom:4px">または助っ人の名前を入力</div>';
+        h += '<div class="row" style="margin-bottom:12px"><input class="in grow" id="guestname" placeholder="例: 田中（助っ人）"><button class="btn grn" onclick="act.setGuest()">設定</button></div>';
+      }
+      h += '<div class="row"><button class="btn gho grow" onclick="act.clearToken()">' + (hasPlayer ? "この枠を空にする" : "未定に戻す") + '</button>';
       if (t.guest || isBench) h += '<button class="btn dgr grow" onclick="act.deleteToken()">枠を削除</button>';
       h += '</div>';
     }
@@ -1747,7 +1750,12 @@ function bindPitch(){
     }
     if (e){
       var tgt2 = nearestToken(pct(e), d.id);
-      if (tgt2){ act.swapAny(d.id, tgt2.id); return; }    /* フィールド↔フィールド */
+      if (tgt2){
+        var mv = tok(d.id);
+        if (mv && d.ox != null){ mv.x = d.ox; mv.y = d.oy; } /* 掴んだ駒を元位置へ戻す */
+        act.swapAny(d.id, tgt2.id);
+        return;
+      }
     }
     save(); render();
   }
@@ -1766,7 +1774,8 @@ function bindPitch(){
     if (!target) return;
     e.preventDefault();
     lastE = { clientX: e.clientX, clientY: e.clientY };
-    drag = { kind: kind, id: target.getAttribute("data-id"), el: target, sx: e.clientX, sy: e.clientY, moved: false };
+    var _t0 = tok(target.getAttribute("data-id"));
+    drag = { kind: kind, id: target.getAttribute("data-id"), el: target, sx: e.clientX, sy: e.clientY, moved: false, ox: _t0 ? _t0.x : null, oy: _t0 ? _t0.y : null };
     document.addEventListener("pointermove", onMove, { passive: false });
     document.addEventListener("pointerup", onUp);
     document.addEventListener("pointercancel", onCancel);
