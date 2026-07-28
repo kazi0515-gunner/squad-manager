@@ -428,24 +428,35 @@ function rRotation(){
   }
   h += '</div>';
 
-  /* 配分の目安 */
+  /* 配分の目安（GKはフル出場前提。複数なら山分け） */
   if (N > 0){
-    var base = ui.rot.field * ui.rot.total;
     var st = stepMin();
+    var gk = gkIds();
+    var gkN = gk.length;
+    var fieldSlots = ui.rot.field - (gkN > 0 ? 1 : 0);   /* GK枠1つを除いたフィールド枠 */
+    var fieldPlayers = N - gkN;                          /* GK以外の参加者 */
+    var fieldBase = fieldSlots * ui.rot.total;           /* フィールドの延べ時間 */
     h += '<div class="card" style="margin-bottom:10px;background:#1B3C8C0A;border-color:#1B3C8C33">';
-    h += '<div style="font-size:13px;line-height:1.6"><b>📐 配分の目安（' + st + '分刻み）</b><br>コート' + ui.rot.field + '人 × ' + ui.rot.total + '分 = 延べ' + base + '分</div>';
-    var lower = Math.floor(base / N / st) * st;
-    if (lower >= ui.rot.total){
-      h += '<div style="font-size:14px;margin-top:4px"><b>全員フル出場（' + ui.rot.total + '分）できます</b></div>';
+    h += '<div style="font-size:13px;line-height:1.6"><b>📐 配分の目安（' + st + '分刻み）</b>';
+    if (gkN === 1) h += '<br>🧤 GK1名はフル出場（' + ui.rot.total + '分）';
+    else if (gkN >= 2) h += '<br>🧤 GK' + gkN + '名で山分け（各' + fixedMin(gk[0]) + '分）';
+    h += '<br>フィールド ' + fieldSlots + '枠 × ' + ui.rot.total + '分 = 延べ' + fieldBase + '分</div>';
+    if (fieldPlayers <= 0){
+      h += '<div style="font-size:13px;margin-top:4px">フィールドの選手がいません</div>';
     } else {
-      var nUp = Math.round((base - lower * N) / st);
-      if (nUp > N) nUp = N;
-      var upper = lower + st;
-      var parts = [];
-      if (nUp > 0) parts.push('<b style="font-size:16px">' + upper + '分×' + nUp + '名</b>');
-      if (N - nUp > 0) parts.push('<b style="font-size:16px">' + lower + '分×' + (N - nUp) + '名</b>');
-      h += '<div style="font-size:13px;margin-top:4px">参加' + N + '名 → ' + parts.join(' ＋ ') + '</div>';
-      if (lower === 0) h += '<div style="font-size:11px;color:var(--fw);margin-top:2px">⚠ 参加が多く、出場0分の人が出る計算です</div>';
+      var lower = Math.floor(fieldBase / fieldPlayers / st) * st;
+      if (lower >= ui.rot.total){
+        h += '<div style="font-size:14px;margin-top:4px"><b>フィールド全員フル出場（' + ui.rot.total + '分）できます</b></div>';
+      } else {
+        var nUp = Math.round((fieldBase - lower * fieldPlayers) / st);
+        if (nUp > fieldPlayers) nUp = fieldPlayers;
+        var upper = lower + st;
+        var parts = [];
+        if (nUp > 0) parts.push('<b style="font-size:16px">' + upper + '分×' + nUp + '名</b>');
+        if (fieldPlayers - nUp > 0) parts.push('<b style="font-size:16px">' + lower + '分×' + (fieldPlayers - nUp) + '名</b>');
+        h += '<div style="font-size:13px;margin-top:4px">フィールド' + fieldPlayers + '名 → ' + parts.join(' ＋ ') + '</div>';
+        if (lower === 0) h += '<div style="font-size:11px;color:var(--fw);margin-top:2px">⚠ 参加が多く、出場0分の人が出る計算です</div>';
+      }
     }
     if (N < ui.rot.field) h += '<div style="font-size:11px;color:var(--fw);margin-top:4px">⚠ 参加人数がコート人数より少ないです</div>';
     h += '</div>';
