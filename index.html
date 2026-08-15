@@ -637,7 +637,7 @@ function rRotResult(){
         }
       }
       var inIds = prev ? lineup.filter(function(id){ return prev.indexOf(id) < 0; }) : [];
-      h += '<div class="card" style="margin-bottom:8px;padding:10px">';
+      h += '<div class="card" id="blk-' + bl.from + '" style="margin-bottom:8px;padding:10px">';
       h += '<div style="font-weight:800;font-size:13px;margin-bottom:6px">第' + (bi + 1) + 'ブロック <span class="mut" style="font-weight:400">' + t0 + '〜' + t1 + '分（' + lineup.length + '人）</span></div>';
       h += miniPitch(lineup, curGk(lineup), inIds, String(bl.from));
       h += '<button class="btn sm gho" style="width:100%;margin-top:8px" onclick="act.editBlockOnBoard(\'' + bl.from + '\')">📋 このブロックをボードで編集 →</button>';
@@ -1668,16 +1668,20 @@ var act = {
     S.board = be.prevBoard || { fname: ui.fname, tokens: [], bench: [], showEnemy: false, showBench: false };
     ui.fname = be.prevFname || ui.fname;
     ui.blockEdit = null;
-    ui.tab = "rotation";
+    ui.tab = "board";
     ui.rotView = "match";
     render();
-    setTimeout(function(){ window.scrollTo({ top: 0, behavior: "smooth" }); }, 40);
+    /* 反映したブロックまでスクロール */
+    setTimeout(function(){
+      var el = document.getElementById("blk-" + be.key);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 60);
   },
   cancelBlockEdit: function(){
     var be = ui.blockEdit;
     if (be){ S.board = be.prevBoard; ui.fname = be.prevFname; }
     ui.blockEdit = null;
-    ui.tab = "rotation"; ui.rotView = "match";
+    ui.tab = "board"; ui.rotView = "match";
     render();
   },
   slotTap: function(key, si){
