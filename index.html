@@ -176,7 +176,7 @@ var ui = {
   fname: (S.board && S.board.fname) || "4-4-2",
   sheet: null,
   rot: { attend: [], field: 11, total: 60, seg: 4, gk: "", gks: [], opts: {}, guests: [], presetIdx: null },
-  eventId: null, evForm: null, showEvents: false, evEditMode: false,
+  eventId: null, evForm: null, showEvents: false, evEditMode: false, blockEdit: null,
   rotResult: null,
   showOpts: false, showAttend: true, rotView: "table", showNames: false, shotCols: null,
   em: null
@@ -269,40 +269,57 @@ function rMembers(){
 /* ---------- board ---------- */
 function rBoard(){
   var b = board();
-  var h = '<div class="sec-en">Tactics Board</div><div class="sec-ja">編成・入れ替え・ローテーション作成</div>';
-  /* 試合選択（出場時間タブで保存した参加者を反映） */
-  h += '<div class="card" style="margin-bottom:8px;padding:10px 12px">';
-  h += '<div class="row"><select class="in grow" style="padding:8px 10px" onchange="act.loadEvent(this.value)"><option value="">' + (S.events.length ? "📅 試合を選んで参加者を反映" : "保存済みの試合なし") + '</option>';
-  S.events.forEach(function(ev){
-    h += '<option value="' + ev.id + '"' + (ui.eventId === ev.id ? " selected" : "") + '>' + esc(evLabel(ev)) + '</option>';
-  });
-  h += '</select>';
-  h += '<button class="btn sm grn" onclick="act.applyFormation()">配置</button></div>';
-  if (ui.eventId){
-    var ev1 = null; S.events.forEach(function(x){ if (x.id === ui.eventId) ev1 = x; });
-    if (ev1) h += '<div class="lbl-s" style="margin-top:5px">選択中: <b>' + esc(evLabel(ev1)) + '</b>（参加' + ui.rot.attend.length + '名）</div>';
+  var be = ui.blockEdit;
+  var h;
+  if (be){
+    /* ===== ブロック編集モード ===== */
+    var r = ui.rotResult;
+    var t0 = "", t1 = "";
+    if (r){ t0 = Math.round(+be.key * r.segMin); t1 = Math.round((function(){ var e = +be.key; while (e + 1 < r.grid.length && !r.sub[e + 1]) e++; return e + 1; })() * r.segMin); }
+    h = '<div class="sec-en">Block Edit</div><div class="sec-ja">この時間帯の配置を調整</div>';
+    h += '<div class="card" style="margin-bottom:8px;padding:10px 12px;background:#FFF8E1;border-color:var(--gk)">';
+    h += '<div style="font-weight:800;font-size:14px">🕒 ' + t0 + '〜' + t1 + '分 の配置を編集中</div>';
+    h += '<div class="lbl-s" style="margin-top:3px">ドラッグ／タップで入れ替え。ベンチの選手を入れると交代になります</div>';
+    h += '<div class="row" style="margin-top:8px"><button class="btn gho grow" onclick="act.cancelBlockEdit()">キャンセル</button>';
+    h += '<button class="btn grn grow" onclick="act.applyBlockFromBoard()">✓ このブロックに反映</button></div>';
+    h += '</div>';
+    h += '<div id="pitch">';
   } else {
-    h += '<div class="lbl-s" style="margin-top:5px">試合を選ぶと、その参加者で自動配置・ベンチ登録されます</div>';
+    h = '<div class="sec-en">Tactics Board</div><div class="sec-ja">編成・入れ替え・ローテーション作成</div>';
+    /* 試合選択（出場時間タブで保存した参加者を反映） */
+    h += '<div class="card" style="margin-bottom:8px;padding:10px 12px">';
+    h += '<div class="row"><select class="in grow" style="padding:8px 10px" onchange="act.loadEvent(this.value)"><option value="">' + (S.events.length ? "📅 試合を選んで参加者を反映" : "保存済みの試合なし") + '</option>';
+    S.events.forEach(function(ev){
+      h += '<option value="' + ev.id + '"' + (ui.eventId === ev.id ? " selected" : "") + '>' + esc(evLabel(ev)) + '</option>';
+    });
+    h += '</select>';
+    h += '<button class="btn sm grn" onclick="act.applyFormation()">配置</button></div>';
+    if (ui.eventId){
+      var ev1 = null; S.events.forEach(function(x){ if (x.id === ui.eventId) ev1 = x; });
+      if (ev1) h += '<div class="lbl-s" style="margin-top:5px">選択中: <b>' + esc(evLabel(ev1)) + '</b>（参加' + ui.rot.attend.length + '名）</div>';
+    } else {
+      h += '<div class="lbl-s" style="margin-top:5px">試合を選ぶと、その参加者で自動配置・ベンチ登録されます</div>';
+    }
+    h += '</div>';
+    h += '<div class="row" style="margin-bottom:6px"><select class="in grow" style="padding:8px 10px" onchange="ui.fname=this.value;render()">';
+    allFormationNames().forEach(function(k){
+      var label = FORMATIONS[k] ? k : k + "（自作）";
+      h += '<option value="' + esc(k) + '"' + (ui.fname === k ? " selected" : "") + '>' + esc(label) + '</option>';
+    });
+    h += '</select>';
+    if (S.custom[ui.fname]) h += '<button class="btn dgr sm" onclick="act.delFormation()">削除</button>';
+    h += '<button class="btn grn sm" onclick="act.applyFormation()">自動配置</button></div>';
+    h += '<div class="row" style="margin-bottom:8px">';
+    h += '<button class="btn sm ' + (b.showBench ? "pri" : "gho") + '" style="flex:1" onclick="act.toggleBench()">ベンチ</button>';
+    h += '<button class="btn sm ' + (b.showEnemy ? "pri" : "gho") + '" style="flex:1" onclick="act.toggleEnemy()">相手</button>';
+    h += '<button class="btn sm pri" style="flex:1.7" onclick="act.openEventForm()">📅編成を保存</button>';
+    h += '<select class="in" style="flex:2;padding:8px 4px;font-size:12px" onchange="act.loadEvent(this.value)"><option value="">' + (S.events.length ? "保存編成を読込" : "保存済みなし") + '</option>';
+    S.events.forEach(function(ev){
+      h += '<option value="' + ev.id + '">' + esc(evLabel(ev)) + '</option>';
+    });
+    h += '</select></div>';
+    h += '<div id="pitch">';
   }
-  h += '</div>';
-  h += '<div class="row" style="margin-bottom:6px"><select class="in grow" style="padding:8px 10px" onchange="ui.fname=this.value;render()">';
-  allFormationNames().forEach(function(k){
-    var label = FORMATIONS[k] ? k : k + "（自作）";
-    h += '<option value="' + esc(k) + '"' + (ui.fname === k ? " selected" : "") + '>' + esc(label) + '</option>';
-  });
-  h += '</select>';
-  if (S.custom[ui.fname]) h += '<button class="btn dgr sm" onclick="act.delFormation()">削除</button>';
-  h += '<button class="btn grn sm" onclick="act.applyFormation()">自動配置</button></div>';
-  h += '<div class="row" style="margin-bottom:8px">';
-  h += '<button class="btn sm ' + (b.showBench ? "pri" : "gho") + '" style="flex:1" onclick="act.toggleBench()">ベンチ</button>';
-  h += '<button class="btn sm ' + (b.showEnemy ? "pri" : "gho") + '" style="flex:1" onclick="act.toggleEnemy()">相手</button>';
-  h += '<button class="btn sm pri" style="flex:1.7" onclick="act.openEventForm()">📅編成を保存</button>';
-  h += '<select class="in" style="flex:2;padding:8px 4px;font-size:12px" onchange="act.loadEvent(this.value)"><option value="">' + (S.events.length ? "保存編成を読込" : "保存済みなし") + '</option>';
-  S.events.forEach(function(ev){
-    h += '<option value="' + ev.id + '">' + esc(evLabel(ev)) + '</option>';
-  });
-  h += '</select></div>';
-  h += '<div id="pitch">';
   h += '<svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%"><g stroke="rgba(255,255,255,.85)" stroke-width="2" fill="none"><rect x="8" y="8" width="284" height="384"/><line x1="8" y1="200" x2="292" y2="200"/><circle cx="150" cy="200" r="34"/><rect x="75" y="8" width="150" height="56"/><rect x="75" y="336" width="150" height="56"/><rect x="112" y="8" width="76" height="22"/><rect x="112" y="370" width="76" height="22"/></g></svg>';
   var allyCount = 0;
   (b.tokens || []).forEach(function(t){
@@ -332,17 +349,19 @@ function rBoard(){
   }
   h += '</div>';
 
-  /* ===== ローテーション作成 ===== */
-  h += '<div class="card" style="margin-top:12px;padding:12px 14px">';
-  if (ui.rot.attend.length === 0){
-    h += '<div class="lbl-s">⏱ ローテーション表を作るには、上で試合を選ぶか、出場時間タブで参加者を選んでください</div>';
-  } else {
-    h += '<div style="font-weight:700;font-size:14px;margin-bottom:2px">⏱ ローテーション表</div>';
-    h += '<div class="lbl-s" style="margin-bottom:8px">' + ui.rot.total + '分 ／ 参加' + ui.rot.attend.length + '名 ／ ' + ui.rot.seg + '枠</div>';
-    h += '<button class="btn grn" style="width:100%" onclick="act.runRot()">' + (ui.rotResult ? "作り直す" : "ローテーション表を作成") + '</button>';
+  if (!be){
+    /* ===== ローテーション作成（通常モードのみ） ===== */
+    h += '<div class="card" style="margin-top:12px;padding:12px 14px">';
+    if (ui.rot.attend.length === 0){
+      h += '<div class="lbl-s">⏱ ローテーション表を作るには、上で試合を選ぶか、出場時間タブで参加者を選んでください</div>';
+    } else {
+      h += '<div style="font-weight:700;font-size:14px;margin-bottom:2px">⏱ ローテーション表</div>';
+      h += '<div class="lbl-s" style="margin-bottom:8px">' + ui.rot.total + '分 ／ 参加' + ui.rot.attend.length + '名 ／ ' + ui.rot.seg + '枠</div>';
+      h += '<button class="btn grn" style="width:100%" onclick="act.runRot()">' + (ui.rotResult ? "作り直す" : "ローテーション表を作成") + '</button>';
+    }
+    h += '</div>';
+    if (ui.rotResult) h += '<div style="margin-top:10px">' + rRotResult() + '</div>';
   }
-  h += '</div>';
-  if (ui.rotResult) h += '<div style="margin-top:10px">' + rRotResult() + '</div>';
 
   return h;
 }
@@ -621,6 +640,7 @@ function rRotResult(){
       h += '<div class="card" style="margin-bottom:8px;padding:10px">';
       h += '<div style="font-weight:800;font-size:13px;margin-bottom:6px">第' + (bi + 1) + 'ブロック <span class="mut" style="font-weight:400">' + t0 + '〜' + t1 + '分（' + lineup.length + '人）</span></div>';
       h += miniPitch(lineup, curGk(lineup), inIds, String(bl.from));
+      h += '<button class="btn sm gho" style="width:100%;margin-top:8px" onclick="act.editBlockOnBoard(\'' + bl.from + '\')">📋 このブロックをボードで編集 →</button>';
       if (ui.showNames){
         h += '<div style="margin-top:8px">';
         lineup.forEach(function(id){
@@ -1582,6 +1602,83 @@ var act = {
     } catch(e){
       box.innerHTML = '<div class="lbl-s" style="color:var(--fw);margin-top:8px">画像化できませんでした。画面のスクリーンショットをご利用ください。</div>';
     }
+  },
+  editBlockOnBoard: function(fromStr){
+    var r = ui.rotResult;
+    if (!r) return;
+    var key = String(fromStr);
+    var lineup = r.grid[+key] || [];
+    var gkId = curGk(lineup);
+    var placed = blockPlacement(key, lineup, gkId);
+    /* ブロックの現配置をボードtokensへ。si(スロット番号)を保持して書き戻せるように */
+    var tokens = placed.filter(function(p){ return p.si >= 0; }).map(function(p){
+      var m = memById(p.id);
+      var gg = String(p.id).indexOf("g_") === 0;
+      return { id: uid(), side: "ally", pos: p.pos, x: p.x, y: p.y,
+        memberId: gg ? null : p.id, name: m ? m.name : "?", guest: gg, _pid: p.id, _si: p.si };
+    });
+    /* このブロックで出ていない参加者をベンチへ */
+    var onIds = {};
+    lineup.forEach(function(id){ onIds[id] = true; });
+    var bench = ui.rot.attend.filter(function(id){ return !onIds[id]; }).map(function(id){
+      var m = memById(id);
+      var gg = String(id).indexOf("g_") === 0;
+      return { id: uid(), memberId: gg ? null : id, name: m ? m.name : "?", guest: gg, _pid: id };
+    });
+    /* 現ボードを退避 */
+    ui.blockEdit = { key: key, prevBoard: S.board ? JSON.parse(JSON.stringify(S.board)) : null, prevFname: ui.fname };
+    S.board = { fname: ui.fname, tokens: tokens, bench: bench, showEnemy: false, showBench: true };
+    ui.sheet = null;
+    ui.tab = "board";
+    render();
+    setTimeout(function(){ window.scrollTo({ top: 0, behavior: "smooth" }); }, 40);
+  },
+  applyBlockFromBoard: function(){
+    var be = ui.blockEdit;
+    if (!be){ return; }
+    var r = ui.rotResult;
+    var b = board();
+    /* ピッチ上のslot→playerマップを作る。_si がある枠はそのslotを維持、無い枠(ベンチから来た)は元slotに割当 */
+    if (!r.layout) r.layout = {};
+    var map = {};
+    var lineupNew = [];
+    b.tokens.forEach(function(t){
+      if (t.side !== "ally") return;
+      var pid = t.memberId || (t.guest ? t._pid : null) || t._pid;
+      if (!pid) return;
+      var si = (t._si != null) ? t._si : null;
+      if (si != null) map[si] = pid;
+      lineupNew.push(pid);
+    });
+    /* _si を持たない新規投入があった場合、空いているslotに詰める */
+    var slotsN = baseLayout().length;
+    b.tokens.forEach(function(t){
+      if (t.side !== "ally") return;
+      if (t._si != null) return;
+      var pid = t.memberId || t._pid;
+      if (!pid) return;
+      for (var si = 0; si < slotsN; si++){ if (map[si] == null){ map[si] = pid; break; } }
+    });
+    r.layout[be.key] = map;
+    /* grid(出場者リスト)も更新: このブロックの連結範囲すべてに反映 */
+    var s = +be.key; while (s > 0 && !r.sub[s]) s--;
+    var e = +be.key; while (e + 1 < r.grid.length && !r.sub[e + 1]) e++;
+    for (var c = s; c <= e; c++) r.grid[c] = lineupNew.slice();
+    /* ボードを元に戻す */
+    S.board = be.prevBoard || { fname: ui.fname, tokens: [], bench: [], showEnemy: false, showBench: false };
+    ui.fname = be.prevFname || ui.fname;
+    ui.blockEdit = null;
+    ui.tab = "rotation";
+    ui.rotView = "match";
+    render();
+    setTimeout(function(){ window.scrollTo({ top: 0, behavior: "smooth" }); }, 40);
+  },
+  cancelBlockEdit: function(){
+    var be = ui.blockEdit;
+    if (be){ S.board = be.prevBoard; ui.fname = be.prevFname; }
+    ui.blockEdit = null;
+    ui.tab = "rotation"; ui.rotView = "match";
+    render();
   },
   slotTap: function(key, si){
     ui.sheet = { type: "slot", key: key, si: si };
